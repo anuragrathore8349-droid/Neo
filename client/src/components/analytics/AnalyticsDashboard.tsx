@@ -37,7 +37,8 @@ const AnalyticsDashboard: React.FC = () => {
   const [timeframe, setTimeframe] = useState('1m');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExporting, setIsExporting]   = useState(false);
+  const [isReporting, setIsReporting]   = useState(false);
 
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
@@ -178,12 +179,60 @@ const AnalyticsDashboard: React.FC = () => {
             <RefreshCw className="w-4 h-4" />
           </button>
           <button
-            onClick={handleExport}
-            disabled={isExporting}
-            className="flex items-center gap-2 px-4 py-2 bg-dark-800 rounded-lg text-sm hover:bg-dark-700 transition-colors"
+            className="btn-outline disabled:opacity-60"
+            disabled={isExporting || loading}
+            onClick={async () => {
+              setIsExporting(true);
+              try {
+                const rows = [
+                  ['Date', 'Portfolio Value', 'Return %'],
+                  ...perfData.map(p => [p.label, p.value, p.returnPct])
+                ];
+                const csv = rows.map(r => r.join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `neofin-analytics-${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } finally {
+                setIsExporting(false);
+              }
+            }}
           >
-            <Download className="w-4 h-4" />
-            {isExporting ? 'Exporting…' : 'Export Report'}
+            {isExporting ? 'Exporting…' : 'Export Data'}
+          </button>
+          <button
+            className="btn-primary disabled:opacity-60"
+            disabled={isReporting || loading}
+            onClick={async () => {
+              setIsReporting(true);
+              try {
+                const res = await apiFetch<any>('/api/analytics/custom', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    sections: ['performance', 'risk', 'opportunities'],
+                    timeframe,
+                    format: 'json',
+                  }),
+                });
+                const report = res?.data?.report || res?.data;
+                const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `neofin-report-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) {
+                console.error('Report generation failed:', e);
+              } finally {
+                setIsReporting(false);
+              }
+            }}
+          >
+            {isReporting ? 'Generating…' : 'Generate Report'}
           </button>
         </div>
       </div>
