@@ -133,6 +133,12 @@ const userSchema = new mongoose.Schema({
     default: false
   },
   lastLogin: Date,
+  activityLog: [{
+    action: { type: String },
+    ip: { type: String },
+    userAgent: { type: String },
+    timestamp: { type: Date, default: Date.now },
+  }],
   failedLoginAttempts: {
     type: Number,
     default: 0
