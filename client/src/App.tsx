@@ -26,6 +26,7 @@ import LearningCenter from './pages/Learning/LearningCenter.tsx';
 import SecurityCenter from './pages/Security/SecurityCenter.tsx';
 import Settings from './pages/Settings/index.tsx';
 import ProfilePage from './pages/profile/ProfilePage.tsx';
+import Analytics from './pages/Analytics';
 // Components
 import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
@@ -146,6 +147,11 @@ function AppRoutes() {
         <Route path="/settings" element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        } />
+        <Route path="/analytics" element={
+          <ProtectedRoute>
+            <Analytics />
           </ProtectedRoute>
         } />
         <Route path="/profile" element={
