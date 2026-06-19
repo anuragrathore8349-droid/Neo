@@ -479,4 +479,4 @@ class DefiController {
   }
 }
 
-module.exports = new DefiController();
+module.exports = new DefiController(); 
