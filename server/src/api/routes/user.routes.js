@@ -55,4 +55,11 @@ router.get('/security-status',
   userController.getSecurityStatus
 );
 
+// Session management routes
+router.get('/sessions', userController.getSessions);
+router.delete('/sessions/:id', userController.removeSession);
+
+// Delete account
+router.delete('/account', userController.deleteAccount);
+
 module.exports = router;
