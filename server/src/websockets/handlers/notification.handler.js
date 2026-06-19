@@ -56,12 +56,30 @@ class NotificationHandler {
     });
   }
 
-  // Send broadcast notification to all users
-  broadcastNotification(notification) {
-    this.io.of('/notifications').emit('notification', {
-      ...notification,
-      timestamp: Date.now()
-    });
+  // Send broadcast OR user-targeted notification
+  // Overloaded: broadcastNotification(notification) OR broadcastNotification(userId, notification)
+  broadcastNotification(userIdOrNotification, notificationOrUndefined) {
+    if (notificationOrUndefined !== undefined) {
+      // Called with (userId, notification)
+      const userId = userIdOrNotification;
+      const notification = notificationOrUndefined;
+      const room = `user:${userId}`;
+      this.io.of('/notifications').to(room).emit('notification', {
+        ...notification,
+        timestamp: Date.now()
+      });
+      this.io.of('/notifications').to(room).emit('priceAlert', {
+        ...notification,
+        timestamp: Date.now()
+      });
+    } else {
+      // Called with (notification) only — broadcast to all
+      const notification = userIdOrNotification;
+      this.io.of('/notifications').emit('notification', {
+        ...notification,
+        timestamp: Date.now()
+      });
+    }
   }
 
   // Send alert notification
