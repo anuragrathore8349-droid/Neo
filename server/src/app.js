@@ -92,6 +92,20 @@ async function startServer() {
       console.error('⚠️ External sync failed:', err.message);
     }
 
+    // Auto-seed learning content if DB is empty
+    try {
+      const { Article } = require('./models/learning.model');
+      const count = await Article.countDocuments();
+      if (count === 0) {
+        console.log('📚 No learning content found — running seed...');
+        const { execSync } = require('child_process');
+        execSync('node src/utils/seed-learning.js', { cwd: process.cwd(), stdio: 'inherit' });
+        console.log('✅ Learning content seeded');
+      }
+    } catch (err) {
+      console.warn('⚠️ Learning seed skipped:', err.message);
+    }
+
     // Start price broadcast job
     try {
       await startPriceBroadcast();
