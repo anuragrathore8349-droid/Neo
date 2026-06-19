@@ -1,41 +1,83 @@
-const OpenAI = require('openai');
 const Portfolio = require('../models/portfolio.model');
+const PortfolioHistory = require('../models/portfolio-history.model');
 const marketService = require('./market.service');
 const { logger } = require('../api/middlewares/logger.middleware');
-const { calculateMetrics } = require('../utils/calculations');
-const { predictPrices } = require('../utils/predictions');
-const { analyzeSentiment } = require('../utils/sentiment');
 
 class AnalyticsService {
-  constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey && apiKey !== 'your-openai-api-key-here') {
-      this.openai = new OpenAI({
-        apiKey: apiKey
-      });
-    } else {
-      this.openai = null;
-      console.warn('OpenAI API key not configured. AI features will be limited.');
-    }
-  }
 
-  async getPerformanceAnalytics(userId, timeframe, metrics) {
+  async getPerformanceAnalytics(userId, timeframe = '1m', metrics = ['returns']) {
     try {
       const portfolio = await Portfolio.findOne({ userId });
       if (!portfolio) {
-        throw new Error('Portfolio not found');
+        return { timeframe, metrics: { returns: [], message: 'No portfolio found' }, lastUpdated: new Date() };
       }
 
-      const performanceData = await this.calculatePerformanceMetrics(
-        portfolio,
-        timeframe,
-        metrics
-      );
+      const PortfolioHistory = require('../models/portfolio-history.model');
+      const days = this._timeframeToDays(timeframe);
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      const history = await PortfolioHistory.find({
+        portfolioId: portfolio._id,
+        timestamp: { $gte: from }
+      }).sort({ timestamp: 1 }).lean();
+
+      const returns = history.map((h, i) => {
+        const prev = history[i - 1];
+        const pct = prev && prev.totalValue > 0
+          ? ((h.totalValue - prev.totalValue) / prev.totalValue) * 100
+          : 0;
+        return {
+          label: new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          date: h.timestamp,
+          value: h.totalValue || 0,
+          returnPct: parseFloat(pct.toFixed(2)),
+        };
+      });
+
+      let volatility = null;
+      let sharpeRatio = null;
+      let sortinoRatio = null;
+      let maxDrawdown = null;
+
+      if (returns.length > 1) {
+        const retPcts = returns.map(r => r.returnPct).filter(v => !isNaN(v));
+        const mean = retPcts.reduce((s, v) => s + v, 0) / retPcts.length;
+        const variance = retPcts.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / retPcts.length;
+        volatility = parseFloat(Math.sqrt(variance).toFixed(4));
+
+        const riskFreeRate = 0.05 / 252; // daily risk-free
+        sharpeRatio = volatility > 0
+          ? parseFloat(((mean - riskFreeRate) / volatility).toFixed(4))
+          : 0;
+
+        const downside = retPcts.filter(r => r < 0);
+        const downsideVol = downside.length > 0
+          ? Math.sqrt(downside.reduce((s, v) => s + v * v, 0) / downside.length)
+          : 0;
+        sortinoRatio = downsideVol > 0
+          ? parseFloat(((mean - riskFreeRate) / downsideVol).toFixed(4))
+          : 0;
+
+        let peak = -Infinity;
+        let maxDD = 0;
+        for (const r of returns) {
+          if (r.value > peak) peak = r.value;
+          const dd = peak > 0 ? ((peak - r.value) / peak) * 100 : 0;
+          if (dd > maxDD) maxDD = dd;
+        }
+        maxDrawdown = parseFloat(maxDD.toFixed(2));
+      }
 
       return {
         timeframe,
-        metrics: performanceData,
-        lastUpdated: new Date()
+        metrics: {
+          returns,
+          ...(volatility !== null && { volatility }),
+          ...(sharpeRatio !== null && { sharpeRatio }),
+          ...(sortinoRatio !== null && { sortinoRatio }),
+          ...(maxDrawdown !== null && { maxDrawdown }),
+        },
+        lastUpdated: new Date(),
       };
     } catch (error) {
       logger.error('Error getting performance analytics:', error);
@@ -43,26 +85,56 @@ class AnalyticsService {
     }
   }
 
-  async getRiskAssessment(userId, assets = [], timeframe) {
+  async getRiskAssessment(userId, assets = [], timeframe = '1m') {
     try {
       const portfolio = await Portfolio.findOne({ userId });
       if (!portfolio) {
-        throw new Error('Portfolio not found');
+        return { overall: {}, assets: [], lastUpdated: new Date() };
       }
 
       const assetsToAnalyze = assets.length > 0
-        ? portfolio.assets.filter(asset => assets.includes(asset.symbol))
-        : portfolio.assets;
+        ? portfolio.assets.filter(a => assets.includes(a.symbol))
+        : portfolio.assets.slice(0, 10);
 
-      const riskMetrics = await this.calculateRiskMetrics(
-        assetsToAnalyze,
-        timeframe
-      );
+      const riskMetrics = await Promise.all(assetsToAnalyze.map(async (asset) => {
+        try {
+          const histResult = await marketService.getPriceHistory(asset.symbol, '1d');
+          const prices = (histResult?.prices || []).map((p) => p.close || p.price || 0).filter(v => v > 0);
 
+          if (prices.length < 5) {
+            return { symbol: asset.symbol, volatility: 0, var: 0, beta: 1, riskLevel: 'Unknown' };
+          }
+
+          const returns = prices.slice(1).map((p, i) => (p - prices[i]) / prices[i]);
+          const mean = returns.reduce((s, v) => s + v, 0) / returns.length;
+          const variance = returns.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / returns.length;
+          const vol = Math.sqrt(variance);
+
+          // Simple VaR at 95% confidence
+          const sorted = [...returns].sort((a, b) => a - b);
+          const varIndex = Math.floor(sorted.length * 0.05);
+          const valueAtRisk = Math.abs(sorted[varIndex] || 0);
+
+          return {
+            symbol: asset.symbol,
+            volatility: parseFloat(vol.toFixed(4)),
+            var: parseFloat(valueAtRisk.toFixed(4)),
+            beta: 1.0, // simplified; real beta needs market index correlation
+            riskLevel: vol > 0.05 ? 'High' : vol > 0.02 ? 'Medium' : 'Low',
+          };
+        } catch {
+          return { symbol: asset.symbol, volatility: 0, var: 0, beta: 1, riskLevel: 'Unknown' };
+        }
+      }));
+
+      const avgVol = riskMetrics.reduce((s, m) => s + m.volatility, 0) / (riskMetrics.length || 1);
       return {
-        overall: this.aggregateRiskMetrics(riskMetrics),
+        overall: {
+          portfolioVolatility: parseFloat(avgVol.toFixed(4)),
+          riskScore: avgVol > 0.05 ? 'High' : avgVol > 0.02 ? 'Medium' : 'Low',
+        },
         assets: riskMetrics,
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
       };
     } catch (error) {
       logger.error('Error getting risk assessment:', error);
@@ -70,74 +142,53 @@ class AnalyticsService {
     }
   }
 
-  async getPricePredictions(symbol, timeframe) {
+  async getPricePredictions(symbol, timeframe = '1d') {
     try {
-      const historicalData = await marketService.getPriceHistory(
-        symbol,
-        timeframe
-      );
-
-      const predictions = await predictPrices(historicalData);
-      const insights = await this.generatePredictionInsights(
-        symbol,
-        predictions
-      );
-
-      return {
-        symbol,
-        timeframe,
-        predictions,
-        insights,
-        confidence: predictions.confidence,
-        lastUpdated: new Date()
-      };
+      const aiService = require('./ai.service');
+      return await aiService.getPricePredictions(symbol, timeframe, 7);
     } catch (error) {
       logger.error('Error getting price predictions:', error);
       throw error;
     }
   }
 
-  async getMarketSentiment(symbol, sources) {
+  async getMarketSentiment(symbol, sources = ['news', 'technical']) {
     try {
-      const sentimentData = await Promise.all(
-        sources.map(source => this.getSentimentBySource(symbol, source))
-      );
-
-      const aggregatedSentiment = this.aggregateSentiment(sentimentData);
-
-      return {
-        symbol,
-        overall: aggregatedSentiment,
-        sources: sentimentData,
-        lastUpdated: new Date()
-      };
+      const aiService = require('./ai.service');
+      const src = Array.isArray(sources) ? sources.join(',') : sources;
+      return await aiService.getMarketSentiment(symbol, src, '24h');
     } catch (error) {
       logger.error('Error getting market sentiment:', error);
       throw error;
     }
   }
 
-  async getInvestmentOpportunities(userId, type, filters) {
+  async getInvestmentOpportunities(userId, type = 'all', filters = {}) {
     try {
-      let opportunities = [];
+      // Pull market data for top assets and rank by momentum
+      const symbols = ['BTC', 'ETH', 'SOL', 'ADA', 'AVAX', 'LINK', 'UNI'];
+      const prices = await marketService.getMarketPrices(symbols);
+      const opportunities = [];
 
-      if (type === 'all' || type === 'trading') {
-        const tradingOpps = await this.findTradingOpportunities(filters);
-        opportunities.push(...tradingOpps);
+      for (const [symbol, data] of Object.entries(prices)) {
+        if (!data || data.price == null) continue;
+        const change = data.change24h || 0;
+        if (Math.abs(change) > 2) {
+          opportunities.push({
+            type: 'trading',
+            asset: symbol,
+            currentPrice: data.price,
+            change24h: change,
+            potentialReturn: Math.abs(change),
+            risk: Math.abs(change) > 10 ? 'High' : Math.abs(change) > 5 ? 'Medium' : 'Low',
+            confidence: 50 + Math.min(Math.abs(change) * 2, 40),
+            signal: change > 0 ? 'bullish momentum' : 'bearish — potential reversal',
+          });
+        }
       }
 
-      if (type === 'all' || type === 'defi') {
-        const defiOpps = await this.findDefiOpportunities(filters);
-        opportunities.push(...defiOpps);
-      }
-
-      opportunities.sort((a, b) => b.potentialReturn - a.potentialReturn);
-
-      return {
-        opportunities,
-        count: opportunities.length,
-        lastUpdated: new Date()
-      };
+      opportunities.sort((a, b) => b.confidence - a.confidence);
+      return { opportunities: opportunities.slice(0, 10), count: opportunities.length, lastUpdated: new Date() };
     } catch (error) {
       logger.error('Error getting investment opportunities:', error);
       throw error;
@@ -146,290 +197,36 @@ class AnalyticsService {
 
   async generateCustomReport(userId, reportConfig) {
     try {
-      const reportSections = await Promise.all(
-        reportConfig.sections.map(section => this.generateReportSection(
-          userId,
-          section
-        ))
+      const sections = await Promise.all(
+        (reportConfig.sections || []).map(section => this._generateSection(userId, section))
       );
-
-      const report = {
-        title: reportConfig.title,
-        timestamp: new Date(),
-        sections: reportSections
-      };
-
-      if (reportConfig.schedule) {
-        await this.scheduleReport(userId, reportConfig);
-      }
-
-      return report;
+      return { title: reportConfig.title || 'Analytics Report', timestamp: new Date(), sections };
     } catch (error) {
       logger.error('Error generating custom report:', error);
       throw error;
     }
   }
 
-  // Private helper methods
-  async calculatePerformanceMetrics(portfolio, timeframe, metrics) {
-    const historicalData = await this.getHistoricalPortfolioData(portfolio, timeframe);
-    
-    const performanceMetrics = {};
-    
-    for (const metric of metrics) {
-      switch (metric) {
-        case 'returns':
-          performanceMetrics.returns = this.calculateReturns(historicalData);
-          break;
-        case 'volatility':
-          performanceMetrics.volatility = this.calculateVolatility(historicalData);
-          break;
-        case 'sharpe_ratio':
-          performanceMetrics.sharpeRatio = this.calculateSharpeRatio(historicalData);
-          break;
-        case 'sortino_ratio':
-          performanceMetrics.sortinoRatio = this.calculateSortinoRatio(historicalData);
-          break;
-        case 'max_drawdown':
-          performanceMetrics.maxDrawdown = this.calculateMaxDrawdown(historicalData);
-          break;
-      }
-    }
-    
-    return performanceMetrics;
-  }
-
-  async calculateRiskMetrics(assets, timeframe) {
-    const riskMetrics = await Promise.all(assets.map(async (asset) => {
-      const historicalData = await marketService.getPriceHistory(
-        asset.symbol,
-        timeframe
-      );
-
-      return {
-        symbol: asset.symbol,
-        volatility: this.calculateVolatility(historicalData),
-        var: this.calculateValueAtRisk(historicalData),
-        beta: await this.calculateBeta(historicalData),
-        correlations: await this.calculateCorrelations(asset.symbol, assets),
-        riskContribution: this.calculateRiskContribution(asset, assets)
-      };
-    }));
-
-    return riskMetrics;
-  }
-
-  aggregateRiskMetrics(metrics) {
-    return {
-      portfolioVolatility: this.calculatePortfolioVolatility(metrics),
-      portfolioVar: this.calculatePortfolioVaR(metrics),
-      diversificationScore: this.calculateDiversificationScore(metrics),
-      riskScore: this.calculateRiskScore(metrics)
-    };
-  }
-
-  async getSentimentBySource(symbol, source) {
-    switch (source) {
-      case 'news':
-        return await this.getNewsSentiment(symbol);
-      case 'social':
-        return await this.getSocialSentiment(symbol);
-      case 'technical':
-        return await this.getTechnicalSentiment(symbol);
-      case 'onchain':
-        return await this.getOnChainSentiment(symbol);
-      default:
-        throw new Error(`Unsupported sentiment source: ${source}`);
-    }
-  }
-
-  async getNewsSentiment(symbol) {
-    const newsArticles = await this.fetchNewsArticles(symbol);
-    const sentiments = await Promise.all(
-      newsArticles.map(article => analyzeSentiment(article.content))
-    );
-    
-    return {
-      source: 'news',
-      score: this.averageSentiments(sentiments),
-      articles: newsArticles.length,
-      timestamp: new Date()
-    };
-  }
-
-  async getSocialSentiment(symbol) {
-    const socialPosts = await this.fetchSocialPosts(symbol);
-    const sentiments = await Promise.all(
-      socialPosts.map(post => analyzeSentiment(post.content))
-    );
-    
-    return {
-      source: 'social',
-      score: this.averageSentiments(sentiments),
-      posts: socialPosts.length,
-      timestamp: new Date()
-    };
-  }
-
-  async getTechnicalSentiment(symbol) {
-    const technicalIndicators = await this.calculateTechnicalIndicators(symbol);
-    return {
-      source: 'technical',
-      score: this.aggregateTechnicalSignals(technicalIndicators),
-      indicators: technicalIndicators,
-      timestamp: new Date()
-    };
-  }
-
-  async getOnChainSentiment(symbol) {
-    const metrics = await this.fetchOnChainMetrics(symbol);
-    return {
-      source: 'onchain',
-      score: this.calculateOnChainSentiment(metrics),
-      metrics,
-      timestamp: new Date()
-    };
-  }
-
-  aggregateSentiment(sentimentData) {
-    const weights = {
-      news: 0.3,
-      social: 0.2,
-      technical: 0.3,
-      onchain: 0.2
-    };
-
-    let weightedScore = 0;
-    let totalWeight = 0;
-
-    sentimentData.forEach(data => {
-      const weight = weights[data.source];
-      weightedScore += data.score * weight;
-      totalWeight += weight;
-    });
-
-    return {
-      score: weightedScore / totalWeight,
-      label: this.getSentimentLabel(weightedScore / totalWeight),
-      confidence: this.calculateAggregateConfidence(sentimentData)
-    };
-  }
-
-  async findTradingOpportunities(filters) {
-    const assets = await this.getAnalyzedAssets();
-    const opportunities = [];
-
-    for (const asset of assets) {
-      const metrics = await this.analyzeAssetOpportunity(asset);
-      
-      if (this.meetsOpportunityFilters(metrics, filters)) {
-        opportunities.push({
-          type: 'trading',
-          asset: asset.symbol,
-          metrics,
-          potentialReturn: metrics.expectedReturn,
-          risk: metrics.risk,
-          confidence: metrics.confidence,
-          strategy: await this.generateTradingStrategy(asset, metrics)
-        });
-      }
-    }
-
-    return opportunities;
-  }
-
-  async findDefiOpportunities(filters) {
-    const protocols = await this.getDefiProtocols();
-    const opportunities = [];
-
-    for (const protocol of protocols) {
-      const pools = await this.analyzeDefiPools(protocol);
-      
-      for (const pool of pools) {
-        const metrics = await this.analyzePoolOpportunity(pool);
-        
-        if (this.meetsOpportunityFilters(metrics, filters)) {
-          opportunities.push({
-            type: 'defi',
-            protocol: protocol.name,
-            pool: pool.name,
-            metrics,
-            potentialReturn: metrics.apy,
-            risk: metrics.risk,
-            confidence: metrics.confidence,
-            strategy: await this.generateDefiStrategy(pool, metrics)
-          });
-        }
-      }
-    }
-
-    return opportunities;
-  }
-
-  async generateReportSection(userId, section) {
+  async _generateSection(userId, section) {
     switch (section.type) {
       case 'performance':
-        return {
-          type: 'performance',
-          title: 'Performance Analysis',
-          data: await this.getPerformanceAnalytics(
-            userId,
-            section.params?.timeframe || '1m',
-            section.params?.metrics
-          )
-        };
+        return { type: 'performance', title: 'Performance', data: await this.getPerformanceAnalytics(userId, section.params?.timeframe, section.params?.metrics) };
       case 'risk':
-        return {
-          type: 'risk',
-          title: 'Risk Assessment',
-          data: await this.getRiskAssessment(
-            userId,
-            section.params?.assets,
-            section.params?.timeframe
-          )
-        };
+        return { type: 'risk', title: 'Risk', data: await this.getRiskAssessment(userId, section.params?.assets, section.params?.timeframe) };
       case 'predictions':
-        return {
-          type: 'predictions',
-          title: 'Price Predictions',
-          data: await this.getPricePredictions(
-            section.params.symbol,
-            section.params?.timeframe
-          )
-        };
+        return { type: 'predictions', title: 'Predictions', data: await this.getPricePredictions(section.params?.symbol, section.params?.timeframe) };
       case 'sentiment':
-        return {
-          type: 'sentiment',
-          title: 'Market Sentiment',
-          data: await this.getMarketSentiment(
-            section.params.symbol,
-            section.params?.sources
-          )
-        };
+        return { type: 'sentiment', title: 'Sentiment', data: await this.getMarketSentiment(section.params?.symbol, section.params?.sources) };
       case 'opportunities':
-        return {
-          type: 'opportunities',
-          title: 'Investment Opportunities',
-          data: await this.getInvestmentOpportunities(
-            userId,
-            section.params?.type,
-            section.params?.filters
-          )
-        };
+        return { type: 'opportunities', title: 'Opportunities', data: await this.getInvestmentOpportunities(userId, section.params?.type, section.params?.filters) };
       default:
-        throw new Error(`Unsupported report section type: ${section.type}`);
+        return { type: section.type, title: section.type, data: null };
     }
   }
 
-  async generatePredictionInsights(symbol, predictions) {
-    // Generate AI-powered insights about price predictions
-    // This is a placeholder - implement with OpenAI API when needed
-    return {
-      trend: predictions.trend || 'neutral',
-      confidence: predictions.confidence || 0.5,
-      keyFactors: ['market_sentiment', 'technical_indicators'],
-      recommendation: 'hold'
-    };
+  _timeframeToDays(tf) {
+    const map = { '1d': 1, '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+    return map[tf] || 30;
   }
 }
 
