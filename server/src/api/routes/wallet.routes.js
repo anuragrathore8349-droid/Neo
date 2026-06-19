@@ -1,4 +1,4 @@
-// FILE: src/api/routes/wallet.routes.js
+
 const express = require('express');
 const { validateRequest } = require('../middlewares/validator.middleware');
 const { authMiddleware } = require('../middlewares/auth.middleware');
