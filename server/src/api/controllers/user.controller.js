@@ -117,8 +117,17 @@ class UserController {
     try {
       const User = require('../../models/user.model');
       const user = await User.findById(req.user.userId)
-        .select('isTwoFactorEnabled refreshTokens isEmailVerified lastLogin failedLoginAttempts');
-      
+        .select('isTwoFactorEnabled refreshTokens isEmailVerified lastLogin failedLoginAttempts activityLog');
+
+      const recentActivity = (user.activityLog || []).slice(0, 20).map(entry => ({
+        action: entry.action,
+        ip: entry.ip,
+        device: entry.userAgent
+          ? (entry.userAgent.includes('Mobile') ? 'Mobile' : 'Desktop')
+          : 'Unknown',
+        timestamp: entry.timestamp,
+      }));
+
       res.json({
         status: 'success',
         data: {
@@ -126,7 +135,8 @@ class UserController {
           emailVerified: user.isEmailVerified,
           activeSessions: user.refreshTokens?.length || 0,
           lastLogin: user.lastLogin,
-          failedAttempts: user.failedLoginAttempts || 0
+          failedAttempts: user.failedLoginAttempts || 0,
+          recentActivity,
         }
       });
     } catch (error) {
