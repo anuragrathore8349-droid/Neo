@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { io, Socket } from 'socket.io-client';
 import PortfolioSummary from '../../components/dashboard/PortfolioSummary';
 import PerformanceChart from '../../components/dashboard/PerformanceChart';
 import AssetAllocation from '../../components/dashboard/AssetAllocation';
@@ -28,6 +29,8 @@ const Dashboard: React.FC = () => {
   const [depositInfo, setDepositInfo] = useState<DepositAddress | null>(null);
   const [depositWalletName, setDepositWalletName] = useState<string | null>(null);
   const [depositError, setDepositError] = useState<string | null>(null);
+  const [marketSummary, setMarketSummary] = useState(null);
+  const portfolioSocketRef = React.useRef(null);
 
   const downloadExportFile = (data: any, format: 'pdf' | 'excel') => {
     const fileName = `neofin-portfolio-export-${new Date().toISOString().slice(0, 10)}`;
@@ -341,6 +344,45 @@ const Dashboard: React.FC = () => {
     fetchDashboardData();
   }, []);
 
+  // Subscribe to portfolio WebSocket for live P&L updates
+  useEffect(() => {
+    const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
+    const stored = localStorage.getItem('neofin_auth');
+    const token = stored ? JSON.parse(stored)?.accessToken : null;
+    if (!token) return;
+
+    const socket = io(`${SOCKET_URL}/portfolio`, {
+      auth: { token },
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      socket.emit('subscribe', 'portfolio');
+    });
+
+    socket.on('portfolioUpdate', (data: any) => {
+      if (data?.summary) setPortfolioSummary((prev: any) => ({ ...prev, ...data.summary }));
+      if (data?.assets && Array.isArray(data.assets)) setPortfolioAssets(data.assets);
+    });
+
+    portfolioSocketRef.current = socket;
+    return () => { socket.disconnect(); };
+  }, []);
+
+  // Fetch market summary
+  useEffect(() => {
+    const fetchSummary = async () => {
+      try {
+        const res = await fetch(`${(import.meta as any).env?.VITE_API_URL || 'http://localhost:3003'}/api/market/summary`);
+        const json = await res.json();
+        if (json?.data) setMarketSummary(json.data);
+      } catch {}
+    };
+    fetchSummary();
+    const interval = setInterval(fetchSummary, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8 flex items-center justify-center">
@@ -351,6 +393,26 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8">
+      {/* Market Summary Bar */}
+      {marketSummary && (
+        <div className="bg-gradient-to-r from-dark-800 to-dark-700 border border-gray-700 rounded-xl p-3 mb-6 text-sm text-gray-300 space-y-2 sm:space-y-0 sm:flex sm:gap-6 sm:items-center">
+          {marketSummary.totalMarketCap && (
+            <div>Market Cap: <span className="font-semibold text-white">${(marketSummary.totalMarketCap / 1e12).toFixed(2)}T</span></div>
+          )}
+          {marketSummary.volume24h && (
+            <div>24h Vol: <span className="font-semibold text-white">${(marketSummary.volume24h / 1e9).toFixed(1)}B</span></div>
+          )}
+          {marketSummary.btcDominance && (
+            <div>BTC Dom: <span className="font-semibold text-white">{marketSummary.btcDominance.toFixed(1)}%</span></div>
+          )}
+          {marketSummary.fearGreedIndex && (
+            <div>Fear & Greed: <span className={`font-semibold ${marketSummary.fearGreedIndex > 60 ? 'text-red-400' : marketSummary.fearGreedIndex < 40 ? 'text-green-400' : 'text-yellow-400'}`}>{marketSummary.fearGreedIndex}</span></div>
+          )}
+          {marketSummary.topGainer && (
+            <div>Top Gainer: <span className="font-semibold text-green-400">{marketSummary.topGainer.symbol} +{marketSummary.topGainer.change.toFixed(2)}%</span></div>
+          )}
+        </div>
+      )}
       {dataError && (
         <div className="bg-red-900/20 border border-red-500/50 rounded-xl p-4 text-red-200 mb-4">
           <p className="text-sm">{dataError}</p>
