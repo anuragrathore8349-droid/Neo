@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, Component, ErrorInfo } from 'react';
+import { io } from 'socket.io-client';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/common/Tabs';
 import GlassCard from '../../components/common/GlassCard';
 import PriceTicker from '../../components/common/PriceTicker';
@@ -66,7 +67,7 @@ const Trading: React.FC = () => {
   const [isOrdersLoading, setIsOrdersLoading]  = useState(false);
   const [isChartLoading,  setIsChartLoading]   = useState(false);
   const [isDepositOpen,   setIsDepositOpen]    = useState(false);
-  const [isPaperMode,     setIsPaperMode]      = useState(false);
+  const [isPaperMode,     setIsPaperMode]      = useState(true); // Default to paper mode for safety
   const [chartInterval,   setChartInterval]    = useState('1d');
   const [portfolio,       setPortfolio]        = useState<any>(null);
   const [error,           setError]            = useState<string | null>(null);
@@ -75,6 +76,35 @@ const Trading: React.FC = () => {
   const intervalLabelMap: Record<string, string> = {
     '1H': '1h', '4H': '4h', '1D': '1d', '1W': '1w', '1M': '1d',
   };
+
+  // ── WebSocket order book (trading namespace) ──────────────────────────────
+  useEffect(() => {
+    if (!selectedAsset) return;
+    const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
+    const stored = localStorage.getItem('neofin_auth');
+    const token = stored ? JSON.parse(stored)?.accessToken : null;
+    if (!token) return;
+
+    const tradingSocket = io(`${SOCKET_URL}/trading`, {
+      auth: { token },
+      transports: ['websocket'],
+    });
+
+    tradingSocket.on('connect', () => {
+      tradingSocket.emit('subscribeOrderbook', { symbol: selectedAsset.symbol });
+    });
+
+    tradingSocket.on('orderbook', (data: any) => {
+      if (data?.symbol === selectedAsset?.symbol && data?.data) {
+        setOrderBookData(data.data);
+      }
+    });
+
+    return () => {
+      tradingSocket.emit('unsubscribeOrderbook', { symbol: selectedAsset.symbol });
+      tradingSocket.disconnect();
+    };
+  }, [selectedAsset?.symbol]);
 
   // ── WebSocket live price updates ──────────────────────────────────────────
   useMarketSocket({
