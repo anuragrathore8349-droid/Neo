@@ -355,7 +355,7 @@ class AIService {
   /**
    * Generate strategy recommendations using AI
    */
-async getStrategyRecommendations(portfolio, preferences = {}) {
+  async getStrategyRecommendations(portfolio, preferences = {}) {
     try {
       logger.debug('Generating strategy recommendations');
 
