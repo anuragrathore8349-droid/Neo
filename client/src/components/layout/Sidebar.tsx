@@ -10,7 +10,8 @@ import {
   Settings, 
   BookOpen, 
   Shield, 
-  LogOut 
+  LogOut,
+  LineChart
 } from 'lucide-react';
 import Logo from '../common/Logo';
 import { useAuth } from '../../context/AuthContext';
@@ -30,6 +31,7 @@ const Sidebar: React.FC = () => {
     { name: 'Trading', path: '/trading', icon: <BarChart3 size={20} /> },
     { name: 'Wallet', path: '/wallet', icon: <Wallet size={20} /> },
     { name: 'DeFi', path: '/defi', icon: <Zap size={20} /> },
+    { name: 'Analytics', path: '/analytics', icon: <LineChart size={20} /> },
     { name: 'AI Insights', path: '/ai-insights', icon: <Brain size={20} /> },
     { name: 'Learning', path: '/learning', icon: <BookOpen size={20} /> },
     { name: 'Security', path: '/security', icon: <Shield size={20} /> },
