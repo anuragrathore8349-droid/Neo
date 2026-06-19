@@ -157,30 +157,33 @@ class AIController {
       next(error);
     }
   }
+
   async getFearGreedIndex(req, res, next) {
-  try {
-    const data = await aiService.getFearGreedIndex();
-    res.json({ status: 'success', data });
-  } catch (error) {
-    next(error);
+    try {
+      const data = await aiService.getFearGreedIndex();
+      res.json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
   }
-}
-async getBTCDominance(req, res, next) {
-  try {
-    const data = await aiService.getBTCDominance();
-    res.json({ status: 'success', data });
-  } catch (error) {
-    next(error);
+
+  async getBTCDominance(req, res, next) {
+    try {
+      const data = await aiService.getBTCDominance();
+      res.json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
   }
-}
-async getTrendingCoins(req, res, next) {
-  try {
-    const data = await aiService.getTrendingCoins();
-    res.json({ status: 'success', data });
-  } catch (error) {
-    next(error);
+
+  async getTrendingCoins(req, res, next) {
+    try {
+      const data = await aiService.getTrendingCoins();
+      res.json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
   }
-}
 }
 
 module.exports = new AIController();
