@@ -264,6 +264,70 @@ const Wallet: React.FC = () => {
       hour: '2-digit', minute: '2-digit',
     });
 
+  // ── MetaMask ETH Send Handler ─────────────────────────────────────────
+  const handleSendEth = async (to: string, amountEth: string, assetSymbol = 'ETH') => {
+    if (!(window as any).ethereum) {
+      setWalletError('MetaMask is not installed');
+      return;
+    }
+    setWalletError(null);
+    setWalletSuccess(null);
+    try {
+      const { ethers } = await import('ethers');
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
+      await provider.send('eth_requestAccounts', []);
+      const signer = provider.getSigner();
+      const fromAddress = await signer.getAddress();
+
+      let txResponse: any;
+      if (assetSymbol === 'ETH') {
+        txResponse = await signer.sendTransaction({
+          to,
+          value: ethers.utils.parseEther(amountEth),
+        });
+      } else {
+        // ERC-20 transfer
+        const ERC20_ABI = [
+          'function transfer(address to, uint256 amount) returns (bool)',
+          'function decimals() view returns (uint8)',
+        ];
+        const tokenAddresses: Record<string, string> = {
+          USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+          USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+          DAI:  '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+          WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+        };
+        const tokenAddress = tokenAddresses[assetSymbol];
+        if (!tokenAddress) throw new Error(`Unsupported token: ${assetSymbol}`);
+        const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+        const decimals = await contract.decimals();
+        const amount = ethers.utils.parseUnits(amountEth, decimals);
+        txResponse = await contract.transfer(to, amount);
+      }
+
+      setWalletSuccess(`Transaction sent! Hash: ${txResponse.hash}`);
+
+      // Cache the transaction in backend
+      if (connectedWallets.length > 0) {
+        const walletId = connectedWallets[0]._id;
+        const { withdrawFunds } = await import('../../services/wallet.service');
+        await withdrawFunds({
+          walletId,
+          asset: assetSymbol,
+          amount: parseFloat(amountEth),
+          destinationAddress: to,
+          network: 'ethereum',
+          signedTx: txResponse.hash,
+        }).catch(() => {});
+      }
+
+      // Reload transactions
+      await loadWalletTransactions();
+    } catch (err: any) {
+      setWalletError(err?.message || 'Transaction failed');
+    }
+  };
+
   return (
     <div className="min-h-screen">
       <WalletHeader
@@ -324,6 +388,7 @@ const Wallet: React.FC = () => {
             onNavigateToTransactions={() => setActiveTab('transactions')}
             onNavigateToAddressBook={() => setActiveTab('addressbook')}
             onNavigateToSecurity={() => setActiveTab('security')}
+            onSend={handleSendEth}
           />
         </TabsContent>
 
