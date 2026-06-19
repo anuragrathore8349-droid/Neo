@@ -253,9 +253,23 @@ const cryptoSymbols = symbols.filter(symbol => {
           if (rate === null || rate === undefined) {
             results[symbol] = { price: null, error: 'Forex rate unavailable' };
           } else {
+            // Fetch yesterday's rate to compute change24h
+            let change24h = null;
+            try {
+              const yesterday = new Date(Date.now() - 86400000);
+              const yDate = yesterday.toISOString().split('T')[0];
+              const yResp = await axios.get('https://api.exchangerate.host/convert', {
+                params: { from: base, to: quote, date: yDate }
+              });
+              const yRate = yResp?.data?.result;
+              if (yRate && yRate !== 0) {
+                change24h = parseFloat((((Number(rate) - yRate) / yRate) * 100).toFixed(4));
+              }
+            } catch (_) { /* non-critical */ }
+
             const priceData = {
               price: Number(rate),
-              change24h: null,
+              change24h,
               volume24h: null,
               marketCap: null,
               lastUpdated: new Date().toISOString()
@@ -506,8 +520,14 @@ const cryptoSymbols = symbols.filter(symbol => {
   }
 
   async fetchCryptoPrices(symbols) {
-    // CoinGecko removed: use Kraken-only pricing via getLivePrices()/fetchFromKraken
-    throw new Error('fetchCryptoPrices removed: use Kraken getLivePrices for crypto pricing');
+    // Delegate to Kraken-only pricing
+    const krakenResults = await this.getLivePrices(symbols);
+    // Return flat price map (symbol -> number) for backward compatibility
+    const prices = {};
+    for (const [symbol, data] of Object.entries(krakenResults)) {
+      prices[symbol] = data?.price ?? null;
+    }
+    return prices;
   }
 
   async fetchStockPrices(symbols) {
@@ -854,27 +874,24 @@ const cryptoSymbols = symbols.filter(symbol => {
 
   async fetchTrendingStocks() {
     try {
-      // Your old code depended on a custom Yahoo API URL that often doesn't exist.
-      // Safer fallback: return empty if not configured.
-      if (!process.env.YAHOO_FINANCE_API_URL) {
-        return [];
-      }
+      const result = await yahooFinance.trendingSymbols('US', { count: 10 });
+      const symbols = (result?.quotes || []).map(q => q.symbol).filter(Boolean);
+      if (!symbols.length) return [];
 
-      const response = await axios.get(`${process.env.YAHOO_FINANCE_API_URL}/trending`, {
-        headers: process.env.YAHOO_FINANCE_API_KEY
-          ? { 'x-api-key': process.env.YAHOO_FINANCE_API_KEY }
-          : {}
-      });
+      const quotes = await yahooFinance.quote(symbols);
+      const quotesArr = Array.isArray(quotes) ? quotes : [quotes];
 
-      return (response.data?.finance?.result?.[0]?.quotes || []).map(quote => ({
-        symbol: quote.symbol,
-        name: quote.shortName,
+      return quotesArr.map(q => ({
+        symbol: q.symbol,
+        name: q.shortName || q.symbol,
         type: 'stock',
-        priceChange24h: quote.regularMarketChangePercent ?? null,
-        marketCap: quote.marketCap ?? null
+        price: q.regularMarketPrice ?? null,
+        priceChange24h: q.regularMarketChangePercent ?? null,
+        volume24h: q.regularMarketVolume ?? null,
+        marketCap: q.marketCap ?? null
       }));
     } catch (error) {
-      logger.error('Error fetching trending stocks:', error);
+      logger.warn('Trending stocks fetch failed (non-critical):', error.message);
       return [];
     }
   }
@@ -1089,11 +1106,20 @@ const cryptoSymbols = symbols.filter(symbol => {
 
   async searchStockAssets(query) {
     try {
-      // yahoo-finance2 has limited direct search in many setups
-      // Safe fallback structure
-      return [];
+      if (!query || query.length < 2) return [];
+      
+      const results = await yahooFinance.search(query);
+      return (results?.quotes || [])
+        .filter(q => q.isYahooFinance && q.quoteType === 'EQUITY')
+        .slice(0, 10)
+        .map(q => ({
+          symbol: q.symbol,
+          name: q.shortname || q.longname || q.symbol,
+          type: 'stock',
+          exchange: q.exchange || ''
+        }));
     } catch (error) {
-      logger.error('Error searching stock assets:', error);
+      logger.warn('Stock asset search failed:', error.message);
       return [];
     }
   }
