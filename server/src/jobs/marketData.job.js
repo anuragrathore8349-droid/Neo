@@ -75,6 +75,8 @@ marketDataQueue.process('priceUpdate', async (job) => {
         });
       }
     }
+    // Check price alerts after every broadcast
+    await checkPriceAlerts(prices);
     logger.debug(`Price broadcast done for ${symbols.join(', ')}`);
   } catch (err) {
     logger.error('priceUpdate job failed:', err.message);
@@ -122,6 +124,54 @@ const startPriceBroadcast = async () => {
     logger.error('Failed to start price broadcast:', err.message);
   }
 };
+
+// ── Price Alert Checker ────────────────────────────────────────────────────
+const MarketAlert = require('../models/market-alert.model');
+
+async function checkPriceAlerts(prices) {
+  try {
+    // Get all untriggered alerts for symbols we just fetched
+    const symbols = Object.keys(prices);
+    const alerts = await MarketAlert.find({
+      symbol: { $in: symbols },
+      isTriggered: false,
+    });
+
+    for (const alert of alerts) {
+      const priceData = prices[alert.symbol];
+      if (!priceData || priceData.price == null) continue;
+
+      const currentPrice = priceData.price;
+      let triggered = false;
+
+      if (alert.type === 'above' && currentPrice >= alert.price) triggered = true;
+      if (alert.type === 'below' && currentPrice <= alert.price) triggered = true;
+
+      if (triggered) {
+        alert.isTriggered = true;
+        alert.triggeredAt = new Date();
+        await alert.save();
+
+        // Broadcast notification via WebSocket
+        if (global.notificationHandler) {
+          global.notificationHandler.broadcastNotification(alert.userId.toString(), {
+            type: 'price_alert',
+            title: `Price Alert: ${alert.symbol}`,
+            message: `${alert.symbol} hit your target of $${alert.price.toLocaleString()}. Current price: $${currentPrice.toLocaleString()}`,
+            symbol: alert.symbol,
+            triggeredPrice: currentPrice,
+            alertPrice: alert.price,
+            alertType: alert.type,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        logger.info(`Price alert triggered: ${alert.symbol} ${alert.type} $${alert.price} (current: $${currentPrice})`);
+      }
+    }
+  } catch (err) {
+    logger.error('Price alert check failed:', err.message);
+  }
+}
 
 marketDataQueue.on('error',  (err)       => logger.error('Market data queue error:', err));
 marketDataQueue.on('failed', (job, err)  => logger.error(`Job ${job.id} (${job.name}) failed:`, err.message));
