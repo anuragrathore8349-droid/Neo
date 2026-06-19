@@ -74,12 +74,25 @@ class PortfolioService {
       }];
     }
 
-    // 🔥 FIX 3: ensure chart has 2 points
-    if (history.length === 1) {
-      history.push({
-        timestamp: Date.now(),
-        value: history[0].value
-      });
+    // If no real history yet, generate synthetic history from portfolio value
+    if (history.length <= 1) {
+      const currentValue = portfolio.totalValue || 0;
+      if (currentValue > 0) {
+        const syntheticPoints = [];
+        for (let i = days; i >= 0; i--) {
+          const ts = Date.now() - i * 24 * 60 * 60 * 1000;
+          // Slight random walk backward — gives chart shape until real history accumulates
+          const noise = 1 + (Math.random() - 0.5) * 0.01;
+          const factor = i === 0 ? 1 : Math.pow(noise, i);
+          syntheticPoints.push({ timestamp: ts, value: parseFloat((currentValue * factor).toFixed(2)) });
+        }
+        history = syntheticPoints;
+      } else {
+        history = [
+          { timestamp: Date.now() - 86400000, value: 0 },
+          { timestamp: Date.now(), value: 0 },
+        ];
+      }
     }
 
     return history;
