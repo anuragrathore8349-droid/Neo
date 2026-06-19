@@ -12,92 +12,15 @@ import aiService from '../../services/ai.service';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
 
-// Mock data - fallback if API fails
-const fallbackPortfolioSummary: PortfolioSummaryType = {
-  totalValue: 124567.89,
-  dailyChange: 1234.56,
-  dailyChangePercentage: 1.23,
-  weeklyChange: 2345.67,
-  weeklyChangePercentage: 2.34,
-  monthlyChange: 3456.78,
-  monthlyChangePercentage: 3.45,
-  allTimeProfit: 12345.67,
-  allTimeProfitPercentage: 12.34
-};
-
-const fallbackChartData: PerformanceData[] = Array.from({ length: 30 }, (_, i) => {
-  const date = new Date();
-  date.setDate(date.getDate() - (30 - i));
-
-  // Create a somewhat realistic price curve
-  const baseValue = 100000;
-  const trend = Math.sin(i / 5) * 10000;
-  const random = (Math.random() - 0.5) * 5000;
-  const value = baseValue + trend + random + (i * 500);
-
-  return {
-    timestamp: date.getTime(),
-    value: value
-  };
-});
-
-const fallbackPortfolioAssets: PortfolioAsset[] = [
-  { id: 'btc', name: 'Bitcoin', symbol: 'BTC', type: 'crypto', price: 43567.89, change24h: 2.34, marketCap: 845000000000, volume24h: 28000000000, quantity: 0.5, value: 21783.95, allocation: 40, profitLoss: 5000, profitLossPercentage: 25, averageBuyPrice: 33567.89 },
-  { id: 'eth', name: 'Ethereum', symbol: 'ETH', type: 'crypto', price: 2345.67, change24h: 1.23, marketCap: 280000000000, volume24h: 15000000000, quantity: 5, value: 11728.35, allocation: 25, profitLoss: 2000, profitLossPercentage: 15, averageBuyPrice: 1945.67 },
-  { id: 'sol', name: 'Solana', symbol: 'SOL', type: 'crypto', price: 123.45, change24h: 5.67, marketCap: 52000000000, volume24h: 3500000000, quantity: 50, value: 6172.5, allocation: 15, profitLoss: 1500, profitLossPercentage: 30, averageBuyPrice: 93.45 },
-  { id: 'usdc', name: 'USD Coin', symbol: 'USDC', type: 'crypto', price: 1, change24h: 0, marketCap: 25000000000, volume24h: 5000000000, quantity: 1000, value: 1000, allocation: 10, profitLoss: 0, profitLossPercentage: 0, averageBuyPrice: 1 },
-  { id: 'aapl', name: 'Apple', symbol: 'AAPL', type: 'stock', price: 178.90, change24h: -0.45, marketCap: 2800000000000, volume24h: 5600000000, quantity: 10, value: 1789, allocation: 5, profitLoss: -50, profitLossPercentage: -2.5, averageBuyPrice: 183.40 },
-  { id: 'tsla', name: 'Tesla', symbol: 'TSLA', type: 'stock', price: 245.67, change24h: -1.23, marketCap: 780000000000, volume24h: 3200000000, quantity: 5, value: 1228.35, allocation: 5, profitLoss: -100, profitLossPercentage: -5, averageBuyPrice: 265.67 },
-  { id: 'xau', name: 'Gold', symbol: 'XAU', type: 'commodity', price: 1945.67, change24h: 0.34, marketCap: undefined, volume24h: undefined, quantity: 0.5, value: 972.84, allocation: 3, profitLoss: 30, profitLossPercentage: 3, averageBuyPrice: 1915.67 },
-  { id: 'eurusd', name: 'EUR/USD', symbol: 'EUR/USD', type: 'forex', price: 1.0923, change24h: -0.12, marketCap: undefined, volume24h: undefined, quantity: 1000, value: 1092.3, allocation: 2, profitLoss: -15, profitLossPercentage: -1.2, averageBuyPrice: 1.1053 }
-];
-
-const fallbackTransactions: Transaction[] = [
-  { id: '1', type: 'buy', asset: { id: 'btc', name: 'Bitcoin', symbol: 'BTC', type: 'crypto', price: 43567.89, change24h: 2.34 }, quantity: 0.1, price: 43567.89, total: 4356.79, fee: 4.36, date: '2023-04-15T10:30:00Z', status: 'completed' },
-  { id: '2', type: 'sell', asset: { id: 'eth', name: 'Ethereum', symbol: 'ETH', type: 'crypto', price: 2345.67, change24h: 1.23 }, quantity: 1.5, price: 2345.67, total: 3518.51, fee: 3.52, date: '2023-04-12T14:45:00Z', status: 'completed' },
-  { id: '3', type: 'buy', asset: { id: 'sol', name: 'Solana', symbol: 'SOL', type: 'crypto', price: 123.45, change24h: 5.67 }, quantity: 20, price: 123.45, total: 2469.00, fee: 2.47, date: '2023-04-10T09:15:00Z', status: 'completed' },
-  { id: '4', type: 'transfer', asset: { id: 'usdc', name: 'USD Coin', symbol: 'USDC', type: 'crypto', price: 1, change24h: 0 }, quantity: 1000, price: 1, total: 1000, fee: 0, date: '2023-04-05T16:20:00Z', status: 'completed' },
-  { id: '5', type: 'stake', asset: { id: 'eth', name: 'Ethereum', symbol: 'ETH', type: 'crypto', price: 2345.67, change24h: 1.23 }, quantity: 2, price: 2345.67, total: 4691.34, fee: 0, date: '2023-04-01T11:10:00Z', status: 'completed' }
-];
-
-const fallbackAiInsights: AiInsight[] = [
-  { id: '1', type: 'prediction', title: 'BTC Price Prediction', description: 'Based on current market conditions, BTC is likely to test the $48,000 resistance level within the next 7 days.', asset: { id: 'btc', name: 'Bitcoin', symbol: 'BTC', type: 'crypto', price: 43567.89, change24h: 2.34 }, confidence: 85, date: '2h ago', action: 'buy' },
-  { id: '2', type: 'alert', title: 'Market Volatility Alert', description: 'Increased market volatility expected due to upcoming Federal Reserve announcement on interest rates.', confidence: 90, date: '5h ago' },
-  { id: '3', type: 'recommendation', title: 'Portfolio Rebalancing', description: 'Consider increasing allocation to SOL as technical indicators suggest strong upward momentum.', asset: { id: 'sol', name: 'Solana', symbol: 'SOL', type: 'crypto', price: 123.45, change24h: 5.67 }, confidence: 75, date: '1d ago', action: 'buy' },
-  { id: '4', type: 'news', title: 'Regulatory Development', description: 'New crypto regulations in EU could positively impact compliant projects like ETH and XRP.', confidence: 80, date: '2d ago' }
-];
-
-// Additional market assets for the Market Overview component - now fetched from API
-// const marketAssets = [
-//   ...fallbackPortfolioAssets.map(asset => ({
-//     id: asset.id,
-//     name: asset.name,
-//     symbol: asset.symbol,
-//     type: asset.type,
-//     price: asset.price,
-//     change24h: asset.change24h,
-//     marketCap: asset.marketCap,
-//     volume24h: asset.volume24h,
-//     logo: undefined
-//   })),
-//   { id: '8', name: 'Cardano', symbol: 'ADA', type: 'crypto' as const, price: 0.45, change24h: -5.8, marketCap: 15800000000, volume24h: 980000000, logo: undefined },
-//   { id: '9', name: 'Polkadot', symbol: 'DOT', type: 'crypto' as const, price: 6.78, change24h: 3.2, marketCap: 8500000000, volume24h: 450000000, logo: undefined },
-//   { id: '10', name: 'Avalanche', symbol: 'AVAX', type: 'crypto' as const, price: 34.56, change24h: 7.8, marketCap: 12300000000, volume24h: 890000000, logo: undefined },
-//   { id: '11', name: 'Microsoft', symbol: 'MSFT', type: 'stock' as const, price: 345.67, change24h: 0.8, marketCap: 2580000000000, volume24h: 4300000000, logo: undefined },
-//   { id: '12', name: 'Amazon', symbol: 'AMZN', type: 'stock' as const, price: 178.45, change24h: 1.2, marketCap: 1840000000000, volume24h: 3900000000, logo: undefined },
-//   { id: '13', name: 'Silver', symbol: 'XAG', type: 'commodity' as const, price: 24.56, change24h: 0.5, marketCap: undefined, volume24h: undefined, logo: undefined },
-//   { id: '14', name: 'USD/JPY', symbol: 'USD/JPY', type: 'forex' as const, price: 151.23, change24h: 0.3, marketCap: undefined, volume24h: undefined, logo: undefined },
-//   { id: '15', name: 'GBP/USD', symbol: 'GBP/USD', type: 'forex' as const, price: 1.2567, change24h: -0.4, marketCap: undefined, volume24h: undefined, logo: undefined }
-// ];
-
 const Dashboard: React.FC = () => {
-  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummaryType>(fallbackPortfolioSummary);
-  const [chartData, setChartData] = useState<PerformanceData[]>(fallbackChartData);
-  const [portfolioAssets, setPortfolioAssets] = useState<PortfolioAsset[]>(fallbackPortfolioAssets);
-  const [transactions, setTransactions] = useState<Transaction[]>(fallbackTransactions);
-  const [aiInsights, setAiInsights] = useState<AiInsight[]>(fallbackAiInsights);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummaryType | null>(null);
+  const [chartData, setChartData] = useState<PerformanceData[]>([]);
+  const [portfolioAssets, setPortfolioAssets] = useState<PortfolioAsset[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [aiInsights, setAiInsights] = useState<AiInsight[]>([]);
   const [marketAssets, setMarketAssets] = useState<MarketAsset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
   const [depositLoading, setDepositLoading] = useState(false);
@@ -409,7 +332,7 @@ const Dashboard: React.FC = () => {
         }
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
-        // Keep fallback data on error
+        setDataError('Failed to load dashboard data. Please refresh the page.');
       } finally {
         setLoading(false);
       }
@@ -428,6 +351,17 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8">
+      {dataError && (
+        <div className="bg-red-900/20 border border-red-500/50 rounded-xl p-4 text-red-200 mb-4">
+          <p className="text-sm">{dataError}</p>
+          <button
+            onClick={() => { setDataError(null); window.location.reload(); }}
+            className="mt-2 text-xs underline text-red-300 hover:text-red-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <div className="container mx-auto">
         <div className="flex flex-col sm:flex-row justify-between items-center mb-6">
           <h2 className="text-2xl font-bold mb-4 sm:mb-0">Dashboard</h2>
