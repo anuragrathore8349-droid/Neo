@@ -1291,333 +1291,336 @@ const params = {
     }
   }
 
-/**
- * Get Fear & Greed Index from Alternative.me — Free, no API key
- * Returns 0-100: 0=Extreme Fear, 100=Extreme Greed
- */
-async getFearGreedIndex() {
-  try {
-    const axios = require('axios');
-    const response = await axios.get('https://api.alternative.me/fng/?limit=7', {
-      timeout: 5000
-    });
-    const data = response.data?.data || [];
-    if (!data.length) throw new Error('No data');
+  /**
+   * Get Fear & Greed Index from Alternative.me — Free, no API key
+   * Returns 0-100: 0=Extreme Fear, 100=Extreme Greed
+   */
+  async getFearGreedIndex() {
+    try {
+      const axios = require('axios');
+      const response = await axios.get('https://api.alternative.me/fng/?limit=7', {
+        timeout: 5000
+      });
+      const data = response.data?.data || [];
+      if (!data.length) throw new Error('No data');
 
-    const current = data[0];
-    const yesterday = data[1] || data[0];
-    const value = parseInt(current.value);
-    const prevValue = parseInt(yesterday.value);
+      const current = data[0];
+      const yesterday = data[1] || data[0];
+      const value = parseInt(current.value);
+      const prevValue = parseInt(yesterday.value);
 
-    return {
-      value,
-      classification: current.value_classification,
-      change: value - prevValue,
-      trend: value > prevValue ? 'improving' : value < prevValue ? 'worsening' : 'stable',
-      history: data.map(d => ({
-        value: parseInt(d.value),
-        label: d.value_classification,
-        date: new Date(parseInt(d.timestamp) * 1000).toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric'
-        })
-      })),
-      zone: value >= 75 ? 'Extreme Greed'
-          : value >= 55 ? 'Greed'
-          : value >= 45 ? 'Neutral'
-          : value >= 25 ? 'Fear'
-          : 'Extreme Fear',
-      advice: value >= 75 ? 'Market euphoria — historically a good time to reduce exposure'
-            : value >= 55 ? 'Bullish sentiment — momentum is strong but watch for reversals'
-            : value >= 45 ? 'Neutral sentiment — wait for clearer signals'
-            : value >= 25 ? 'Fear in market — historically good buying opportunities appear'
-            : 'Extreme fear — strong contrarian buying signal historically',
-      lastUpdated: new Date().toISOString()
-    };
-  } catch (error) {
-    logger.warn('Fear & Greed fetch failed:', error.message);
-    return {
-      value: 50,
-      classification: 'Neutral',
-      change: 0,
-      trend: 'stable',
-      history: [],
-      zone: 'Neutral',
-      advice: 'Market sentiment data temporarily unavailable',
-      lastUpdated: new Date().toISOString()
-    };
+      return {
+        value,
+        classification: current.value_classification,
+        change: value - prevValue,
+        trend: value > prevValue ? 'improving' : value < prevValue ? 'worsening' : 'stable',
+        history: data.map(d => ({
+          value: parseInt(d.value),
+          label: d.value_classification,
+          date: new Date(parseInt(d.timestamp) * 1000).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric'
+          })
+        })),
+        zone: value >= 75 ? 'Extreme Greed'
+            : value >= 55 ? 'Greed'
+            : value >= 45 ? 'Neutral'
+            : value >= 25 ? 'Fear'
+            : 'Extreme Fear',
+        advice: value >= 75 ? 'Market euphoria — historically a good time to reduce exposure'
+              : value >= 55 ? 'Bullish sentiment — momentum is strong but watch for reversals'
+              : value >= 45 ? 'Neutral sentiment — wait for clearer signals'
+              : value >= 25 ? 'Fear in market — historically good buying opportunities appear'
+              : 'Extreme fear — strong contrarian buying signal historically',
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.warn('Fear & Greed fetch failed:', error.message);
+      return {
+        value: 50,
+        classification: 'Neutral',
+        change: 0,
+        trend: 'stable',
+        history: [],
+        zone: 'Neutral',
+        advice: 'Market sentiment data temporarily unavailable',
+        lastUpdated: new Date().toISOString()
+      };
+    }
   }
-}
 
+  /**
+   * Detect support and resistance levels from price history
+   * Used to enrich market insights with technical levels
+   */
+  async getSupportResistanceLevels(symbol) {
+    try {
+      const today = new Date();
+      const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
+      const toDate = today.toISOString().split('T')[0];
 
-/**
- * Detect support and resistance levels from price history
- * Used to enrich market insights with technical levels
- */
-async getSupportResistanceLevels(symbol) {
-  try {
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
-    const toDate = today.toISOString().split('T')[0];
+      const dataResponse = await marketService.getPriceHistory(symbol, '1d', fromDate, toDate);
+      const candles = dataResponse?.prices || dataResponse || [];
+      const prices = candles.map(d => parseFloat(d.close) || 0).filter(p => p > 0);
+      const highs = candles.map(d => parseFloat(d.high) || 0).filter(p => p > 0);
+      const lows = candles.map(d => parseFloat(d.low) || 0).filter(p => p > 0);
 
-    const dataResponse = await marketService.getPriceHistory(symbol, '1d', fromDate, toDate);
-    const candles = dataResponse?.prices || dataResponse || [];
-    const prices = candles.map(d => parseFloat(d.close) || 0).filter(p => p > 0);
-    const highs = candles.map(d => parseFloat(d.high) || 0).filter(p => p > 0);
-    const lows = candles.map(d => parseFloat(d.low) || 0).filter(p => p > 0);
+      if (prices.length < 10) return null;
 
-    if (prices.length < 10) return null;
+      const currentPrice = prices[prices.length - 1];
+      const high30d = Math.max(...highs.length ? highs : prices);
+      const low30d = Math.min(...lows.length ? lows : prices);
+      const range = high30d - low30d;
 
-    const currentPrice = prices[prices.length - 1];
-    const high30d = Math.max(...highs.length ? highs : prices);
-    const low30d = Math.min(...lows.length ? lows : prices);
-    const range = high30d - low30d;
+      // Key levels
+      const resistance1 = high30d;
+      const resistance2 = high30d + range * 0.236; // Fibonacci extension
+      const support1 = low30d;
+      const support2 = low30d - range * 0.236;
+      const midpoint = (high30d + low30d) / 2; // 50% level
 
-    // Key levels
-    const resistance1 = high30d;
-    const resistance2 = high30d + range * 0.236; // Fibonacci extension
-    const support1 = low30d;
-    const support2 = low30d - range * 0.236;
-    const midpoint = (high30d + low30d) / 2; // 50% level
+      // Distance to levels as percentage
+      const distToResistance = ((resistance1 - currentPrice) / currentPrice) * 100;
+      const distToSupport = ((currentPrice - support1) / currentPrice) * 100;
 
-    // Distance to levels as percentage
-    const distToResistance = ((resistance1 - currentPrice) / currentPrice) * 100;
-    const distToSupport = ((currentPrice - support1) / currentPrice) * 100;
+      const nearResistance = distToResistance < 3; // within 3%
+      const nearSupport = distToSupport < 3;
+      const aboveMidpoint = currentPrice > midpoint;
 
-    const nearResistance = distToResistance < 3; // within 3%
-    const nearSupport = distToSupport < 3;
-    const aboveMidpoint = currentPrice > midpoint;
-
-    return {
-      symbol,
-      currentPrice,
-      levels: {
-        resistance2: parseFloat(resistance2.toFixed(2)),
-        resistance1: parseFloat(resistance1.toFixed(2)),
-        midpoint: parseFloat(midpoint.toFixed(2)),
-        support1: parseFloat(support1.toFixed(2)),
-        support2: parseFloat(support2.toFixed(2))
-      },
-      signals: {
-        nearResistance,
-        nearSupport,
-        aboveMidpoint,
-        distToResistance: parseFloat(distToResistance.toFixed(2)),
-        distToSupport: parseFloat(distToSupport.toFixed(2))
-      },
-      insight: nearResistance
-        ? `${symbol} is within ${distToResistance.toFixed(1)}% of 30-day resistance at $${resistance1.toFixed(2)}. Watch for breakout or rejection.`
-        : nearSupport
-        ? `${symbol} is near 30-day support at $${support1.toFixed(2)}. Potential bounce zone.`
-        : aboveMidpoint
-        ? `${symbol} is trading above the 30-day midpoint ($${midpoint.toFixed(2)}), indicating bullish structure.`
-        : `${symbol} is below the 30-day midpoint ($${midpoint.toFixed(2)}), indicating bearish structure.`
-    };
-  } catch (error) {
-    logger.warn(`Support/Resistance failed for ${symbol}:`, error.message);
-    return null;
+      return {
+        symbol,
+        currentPrice,
+        levels: {
+          resistance2: parseFloat(resistance2.toFixed(2)),
+          resistance1: parseFloat(resistance1.toFixed(2)),
+          midpoint: parseFloat(midpoint.toFixed(2)),
+          support1: parseFloat(support1.toFixed(2)),
+          support2: parseFloat(support2.toFixed(2))
+        },
+        signals: {
+          nearResistance,
+          nearSupport,
+          aboveMidpoint,
+          distToResistance: parseFloat(distToResistance.toFixed(2)),
+          distToSupport: parseFloat(distToSupport.toFixed(2))
+        },
+        insight: nearResistance
+          ? `${symbol} is within ${distToResistance.toFixed(1)}% of 30-day resistance at $${resistance1.toFixed(2)}. Watch for breakout or rejection.`
+          : nearSupport
+          ? `${symbol} is near 30-day support at $${support1.toFixed(2)}. Potential bounce zone.`
+          : aboveMidpoint
+          ? `${symbol} is trading above the 30-day midpoint ($${midpoint.toFixed(2)}), indicating bullish structure.`
+          : `${symbol} is below the 30-day midpoint ($${midpoint.toFixed(2)}), indicating bearish structure.`
+      };
+    } catch (error) {
+      logger.warn(`Support/Resistance failed for ${symbol}:`, error.message);
+      return null;
+    }
   }
-}
 
-async getStatisticalStrategyRecommendation(portfolio = {}, preferences = {}) {
-  try {
-    const assets = Array.isArray(portfolio) ? portfolio : (portfolio?.assets || []);
-    
-    const cryptoCount = assets.filter(a =>
-      a.type === 'crypto' || CRYPTO_SYMBOLS.has(a.symbol?.toUpperCase())
-    ).length;
-    const stockCount = assets.filter(a =>
-      a.type === 'stock' || (!CRYPTO_SYMBOLS.has(a.symbol?.toUpperCase()) && !a.symbol?.includes('/'))
-    ).length;
-    const commodityCount = assets.filter(a => a.type === 'commodity').length;
-    const diversification = [cryptoCount, stockCount, commodityCount].filter(c => c > 0).length;
-    
-    const riskTolerance = preferences?.riskTolerance || 0.5;
-    const marketConditions = await this.assessMarketConditions();
-    const btcTrend = marketConditions?.trend || 'neutral';
-    const volatility = marketConditions?.volatility || 0.02;
-    const isHighVol = volatility > 0.03;
-    const isBullish = btcTrend === 'bullish';
-    
-    // Dynamic text based on live market conditions
-    const marketSentence = isBullish
-      ? 'Market is trending bullish — consider increasing exposure gradually.'
-      : 'Market is trending bearish — prioritise capital preservation.';
-    const volSentence = isHighVol
-      ? 'Volatility is elevated — reduce position sizes and use stop-losses.'
-      : 'Volatility is low — stable environment for measured accumulation.';
-    const timingWord = isBullish ? 'accumulate on dips' : 'wait for confirmation before adding';
-    
-    const strategies = [];
-    
-    // Conservative
-    if (diversification >= 2 || riskTolerance <= 0.4 || cryptoCount >= 1) {
-      strategies.push({
-        type: 'conservative',
-        description: 'Focus on long-term wealth preservation with low volatility exposure',
-        expectedReturn: parseFloat((8 + (riskTolerance * 2)).toFixed(1)),
-        risk: 3 + Math.floor(riskTolerance * 2),
-        timeframe: '2-5 years',
-        rationale: `${marketSentence} Conservative approach minimises downside in current conditions.`,
-        steps: [
-          marketSentence,
-          volSentence,
-          'Allocate 60% to stable assets (USDC, stablecoins)',
-          'Hold 30% in blue-chip cryptos (BTC, ETH only)',
-          `Current signal: ${timingWord} on weakness`,
-          'Rebalance quarterly to maintain target allocation'
-        ]
-      });
-    }
-    
-    // Moderate
-    if (diversification >= 1 && riskTolerance >= 0.3) {
-      strategies.push({
+  async getStatisticalStrategyRecommendation(portfolio = {}, preferences = {}) {
+    try {
+      const assets = Array.isArray(portfolio) ? portfolio : (portfolio?.assets || []);
+      
+      const cryptoCount = assets.filter(a =>
+        a.type === 'crypto' || CRYPTO_SYMBOLS.has(a.symbol?.toUpperCase())
+      ).length;
+      const stockCount = assets.filter(a =>
+        a.type === 'stock' || (!CRYPTO_SYMBOLS.has(a.symbol?.toUpperCase()) && !a.symbol?.includes('/'))
+      ).length;
+      const commodityCount = assets.filter(a => a.type === 'commodity').length;
+      const diversification = [cryptoCount, stockCount, commodityCount].filter(c => c > 0).length;
+      
+      const riskTolerance = preferences?.riskTolerance || 0.5;
+      const marketConditions = await this.assessMarketConditions();
+      const btcTrend = marketConditions?.trend || 'neutral';
+      const volatility = marketConditions?.volatility || 0.02;
+      const isHighVol = volatility > 0.03;
+      const isBullish = btcTrend === 'bullish';
+      
+      // Dynamic text based on live market conditions
+      const marketSentence = isBullish
+        ? 'Market is trending bullish — consider increasing exposure gradually.'
+        : 'Market is trending bearish — prioritise capital preservation.';
+      const volSentence = isHighVol
+        ? 'Volatility is elevated — reduce position sizes and use stop-losses.'
+        : 'Volatility is low — stable environment for measured accumulation.';
+      const timingWord = isBullish ? 'accumulate on dips' : 'wait for confirmation before adding';
+      
+      const strategies = [];
+      
+      // Conservative
+      if (diversification >= 2 || riskTolerance <= 0.4 || cryptoCount >= 1) {
+        strategies.push({
+          type: 'conservative',
+          description: 'Focus on long-term wealth preservation with low volatility exposure',
+          expectedReturn: parseFloat((8 + (riskTolerance * 2)).toFixed(1)),
+          risk: 3 + Math.floor(riskTolerance * 2),
+          timeframe: '2-5 years',
+          rationale: `${marketSentence} Conservative approach minimises downside in current conditions.`,
+          steps: [
+            marketSentence,
+            volSentence,
+            'Allocate 60% to stable assets (USDC, stablecoins)',
+            'Hold 30% in blue-chip cryptos (BTC, ETH only)',
+            `Current signal: ${timingWord} on weakness`,
+            'Rebalance quarterly to maintain target allocation'
+          ]
+        });
+      }
+      
+      // Moderate
+      if (diversification >= 1 && riskTolerance >= 0.3) {
+        strategies.push({
+          type: 'moderate',
+          description: 'Balance growth potential with risk management through diversification',
+          expectedReturn: parseFloat((15 + (riskTolerance * 5)).toFixed(1)),
+          risk: 5 + Math.floor(riskTolerance * 2),
+          timeframe: '1-2 years',
+          rationale: `${isBullish ? 'Bullish momentum supports' : 'Defensive positioning suits'} a balanced approach right now.`,
+          steps: [
+            marketSentence,
+            'Maintain 50% in core BTC/ETH holdings',
+            isBullish
+              ? 'Allocate 35% to growth assets — momentum is supportive'
+              : 'Reduce growth exposure to 20% — preserve capital in bearish market',
+            volSentence,
+            'Monitor sentiment weekly and adjust monthly',
+            'Set stop-loss orders on all volatile positions'
+          ]
+        });
+      }
+      
+      // Aggressive
+      if (cryptoCount >= 2 && riskTolerance >= 0.6) {
+        const growthReturn = isBullish ? 35 : 25;
+        strategies.push({
+          type: 'aggressive',
+          description: 'Maximise growth through high-conviction positions',
+          expectedReturn: parseFloat((growthReturn + Math.floor(riskTolerance * 10)).toFixed(1)),
+          risk: 8 + Math.floor(riskTolerance * 2),
+          timeframe: '6-12 months',
+          rationale: `${isBullish ? 'Bullish trend supports aggressive positioning' : 'Caution advised — aggressive strategy carries higher risk in current bearish conditions'}.`,
+          steps: [
+            isBullish
+              ? '🟢 BTC trend is BULLISH — conditions support aggressive positioning'
+              : '🔴 BTC trend is BEARISH — aggressive strategy carries elevated risk currently',
+            isHighVol
+              ? '⚠️ High volatility — use smaller position sizes (max 2% per trade)'
+              : '✅ Low volatility — good conditions for measured position building',
+            'Concentrate 60-70% in high-conviction crypto positions',
+            'Allocate 20% to emerging Layer-2 or DeFi opportunities',
+            'Reserve 10-15% as dry powder for volatility trades',
+            'Implement strict 2% stop-losses on all positions',
+            isBullish ? 'Consider yield farming for additional returns' : 'Avoid leverage until trend confirms reversal'
+          ]
+        });
+      }
+      
+      if (strategies.length === 0) {
+        strategies.push({
+          type: 'moderate',
+          description: 'Balanced strategy for your portfolio',
+          expectedReturn: 15,
+          risk: 5,
+          timeframe: '1-2 years',
+          rationale: 'Default balanced strategy',
+          steps: [
+            marketSentence,
+            volSentence,
+            'Maintain current allocation with quarterly reviews',
+            'Monitor conditions for rebalancing opportunities'
+          ]
+        });
+      }
+      
+      logger.info(`✓ Generated ${strategies.length} market-aware strategy recommendations`);
+      return strategies;
+    } catch (error) {
+      logger.error('Error in statistical strategy recommendation:', error);
+      return [{
         type: 'moderate',
-        description: 'Balance growth potential with risk management through diversification',
-        expectedReturn: parseFloat((15 + (riskTolerance * 5)).toFixed(1)),
-        risk: 5 + Math.floor(riskTolerance * 2),
-        timeframe: '1-2 years',
-        rationale: `${isBullish ? 'Bullish momentum supports' : 'Defensive positioning suits'} a balanced approach right now.`,
-        steps: [
-          marketSentence,
-          'Maintain 50% in core BTC/ETH holdings',
-          isBullish
-            ? 'Allocate 35% to growth assets — momentum is supportive'
-            : 'Reduce growth exposure to 20% — preserve capital in bearish market',
-          volSentence,
-          'Monitor sentiment weekly and adjust monthly',
-          'Set stop-loss orders on all volatile positions'
-        ]
-      });
-    }
-    
-    // Aggressive
-    if (cryptoCount >= 2 && riskTolerance >= 0.6) {
-      const growthReturn = isBullish ? 35 : 25;
-      strategies.push({
-        type: 'aggressive',
-        description: 'Maximise growth through high-conviction positions',
-        expectedReturn: parseFloat((growthReturn + Math.floor(riskTolerance * 10)).toFixed(1)),
-        risk: 8 + Math.floor(riskTolerance * 2),
-        timeframe: '6-12 months',
-        rationale: `${isBullish ? 'Bullish trend supports aggressive positioning' : 'Caution advised — aggressive strategy carries higher risk in current bearish conditions'}.`,
-        steps: [
-          isBullish
-            ? '🟢 BTC trend is BULLISH — conditions support aggressive positioning'
-            : '🔴 BTC trend is BEARISH — aggressive strategy carries elevated risk currently',
-          isHighVol
-            ? '⚠️ High volatility — use smaller position sizes (max 2% per trade)'
-            : '✅ Low volatility — good conditions for measured position building',
-          'Concentrate 60-70% in high-conviction crypto positions',
-          'Allocate 20% to emerging Layer-2 or DeFi opportunities',
-          'Reserve 10-15% as dry powder for volatility trades',
-          'Implement strict 2% stop-losses on all positions',
-          isBullish ? 'Consider yield farming for additional returns' : 'Avoid leverage until trend confirms reversal'
-        ]
-      });
-    }
-    
-    if (strategies.length === 0) {
-      strategies.push({
-        type: 'moderate',
-        description: 'Balanced strategy for your portfolio',
-        expectedReturn: 15,
+        description: 'Default balanced strategy',
+        expectedReturn: 12,
         risk: 5,
         timeframe: '1-2 years',
-        rationale: 'Default balanced strategy',
-        steps: [
-          marketSentence,
-          volSentence,
-          'Maintain current allocation with quarterly reviews',
-          'Monitor conditions for rebalancing opportunities'
-        ]
-      });
+        rationale: 'Safe default strategy',
+        steps: ['Hold current positions', 'Rebalance quarterly', 'Monitor market conditions']
+      }];
     }
-    
-    logger.info(`✓ Generated ${strategies.length} market-aware strategy recommendations`);
-    return strategies;
-  } catch (error) {
-    logger.error('Error in statistical strategy recommendation:', error);
-    return [{
-      type: 'moderate',
-      description: 'Default balanced strategy',
-      expectedReturn: 12,
-      risk: 5,
-      timeframe: '1-2 years',
-      rationale: 'Safe default strategy',
-      steps: ['Hold current positions', 'Rebalance quarterly', 'Monitor market conditions']
-    }];
   }
-}/**
- * Get BTC market dominance — free from CoinGecko, no API key
- * BTC dominance is a key macro metric every crypto analyst uses
- */
-async getBTCDominance() {
-  try {
-    const axios = require('axios');
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/global',
-      { timeout: 5000 }
-    );
-    const data = response.data?.data;
-    if (!data) throw new Error('No data');
 
-    const btcDominance = parseFloat(data.market_cap_percentage?.btc?.toFixed(1)) || 0;
-    const ethDominance = parseFloat(data.market_cap_percentage?.eth?.toFixed(1)) || 0;
-    const totalMarketCap = data.total_market_cap?.usd || 0;
-    const totalVolume24h = data.total_volume?.usd || 0;
-    const marketCapChange = parseFloat(data.market_cap_change_percentage_24h_usd?.toFixed(2)) || 0;
+  /**
+   * Get BTC market dominance — free from CoinGecko, no API key
+   * BTC dominance is a key macro metric every crypto analyst uses
+   */
+  async getBTCDominance() {
+    try {
+      const axios = require('axios');
+      const response = await axios.get(
+        'https://api.coingecko.com/api/v3/global',
+        { timeout: 5000 }
+      );
+      const data = response.data?.data;
+      if (!data) throw new Error('No data');
 
-    return {
-      btcDominance,
-      ethDominance,
-      altcoinDominance: parseFloat((100 - btcDominance - ethDominance).toFixed(1)),
-      totalMarketCap,
-      totalMarketCapFormatted: totalMarketCap > 1e12
-        ? `$${(totalMarketCap / 1e12).toFixed(2)}T`
-        : `$${(totalMarketCap / 1e9).toFixed(0)}B`,
-      totalVolume24h,
-      totalVolumeFormatted: `$${(totalVolume24h / 1e9).toFixed(1)}B`,
-      marketCapChange24h: marketCapChange,
-      signal: btcDominance > 55
-        ? 'BTC dominance high — altcoins underperforming, risk-off environment'
-        : btcDominance < 40
-        ? 'Low BTC dominance — altcoin season may be active'
-        : 'Balanced dominance — healthy market structure',
-      lastUpdated: new Date().toISOString()
-    };
-  } catch (error) {
-    logger.warn('BTC Dominance fetch failed:', error.message);
-    return null;
+      const btcDominance = parseFloat(data.market_cap_percentage?.btc?.toFixed(1)) || 0;
+      const ethDominance = parseFloat(data.market_cap_percentage?.eth?.toFixed(1)) || 0;
+      const totalMarketCap = data.total_market_cap?.usd || 0;
+      const totalVolume24h = data.total_volume?.usd || 0;
+      const marketCapChange = parseFloat(data.market_cap_change_percentage_24h_usd?.toFixed(2)) || 0;
+
+      return {
+        btcDominance,
+        ethDominance,
+        altcoinDominance: parseFloat((100 - btcDominance - ethDominance).toFixed(1)),
+        totalMarketCap,
+        totalMarketCapFormatted: totalMarketCap > 1e12
+          ? `$${(totalMarketCap / 1e12).toFixed(2)}T`
+          : `$${(totalMarketCap / 1e9).toFixed(0)}B`,
+        totalVolume24h,
+        totalVolumeFormatted: `$${(totalVolume24h / 1e9).toFixed(1)}B`,
+        marketCapChange24h: marketCapChange,
+        signal: btcDominance > 55
+          ? 'BTC dominance high — altcoins underperforming, risk-off environment'
+          : btcDominance < 40
+          ? 'Low BTC dominance — altcoin season may be active'
+          : 'Balanced dominance — healthy market structure',
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.warn('BTC Dominance fetch failed:', error.message);
+      return null;
+    }
   }
-}
-/**
- * Get top 7 trending coins right now from CoinGecko
- * Free, no API key, updates every few hours
- */
-async getTrendingCoins() {
-  try {
-    const axios = require('axios');
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/search/trending',
-      { timeout: 5000 }
-    );
-    const coins = response.data?.coins || [];
-    return coins.slice(0, 7).map(({ item }) => ({
-      name: item.name,
-      symbol: item.symbol,
-      rank: item.market_cap_rank,
-      thumb: item.thumb,
-      priceBTC: item.price_btc,
-      score: item.score,
-      slug: item.id
-    }));
-  } catch (error) {
-    logger.warn('Trending coins fetch failed:', error.message);
-    return [];
+
+  /**
+   * Get top 7 trending coins right now from CoinGecko
+   * Free, no API key, updates every few hours
+   */
+  async getTrendingCoins() {
+    try {
+      const axios = require('axios');
+      const response = await axios.get(
+        'https://api.coingecko.com/api/v3/search/trending',
+        { timeout: 5000 }
+      );
+      const coins = response.data?.coins || [];
+      return coins.slice(0, 7).map(({ item }) => ({
+        name: item.name,
+        symbol: item.symbol,
+        rank: item.market_cap_rank,
+        thumb: item.thumb,
+        priceBTC: item.price_btc,
+        score: item.score,
+        slug: item.id
+      }));
+    } catch (error) {
+      logger.warn('Trending coins fetch failed:', error.message);
+      return [];
+    }
   }
-}
+
   aggregateNewsSentiment() {
     return 'neutral';
   }
