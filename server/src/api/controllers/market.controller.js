@@ -257,52 +257,40 @@ class MarketController {
         ([, d]) => d && typeof d === 'object' && d.price > 0,
       );
 
-      for (const [symbol, data] of entries) {
-        const vol    = (data.volume24h  || 0) * mult;
-        const change = (data.change24h  || 0) * mult;
-        totalVolume24h += vol;
+      const btcData = prices['BTC'] || {};
+      const ethData = prices['ETH'] || {};
+      const totalMarketCap = entries.reduce((s, [, d]) => s + (d.marketCap || d.price * 1_000_000 || 0), 0);
 
-        if (change > maxGain) {
-          maxGain   = change;
-          topGainer = { name: getAssetName(symbol), symbol, change: parseFloat(change.toFixed(2)) };
-        }
-        if (change < maxLoss) {
-          maxLoss  = change;
-          topLoser = { name: getAssetName(symbol), symbol, change: parseFloat(change.toFixed(2)) };
-        }
-      }
-
-      const avgChange = entries.length
-        ? entries.reduce((s, [, d]) => s + (d.change24h || 0), 0) / entries.length
-        : 0;
-
-      const fearGreedIndex = Math.round(Math.min(100, Math.max(0, 50 + avgChange * 4)));
+      // Simple Fear & Greed proxy: clamp BTC 24h change to 0-100 scale
+      const btcChange = btcData.change24h || 0;
+      const fearGreedIndex = Math.min(100, Math.max(0, Math.round(50 + btcChange * 2)));
       const fearGreedLabel =
         fearGreedIndex >= 75 ? 'Extreme Greed' :
-        fearGreedIndex >= 55 ? 'Greed'         :
-        fearGreedIndex >= 45 ? 'Neutral'        :
-        fearGreedIndex >= 25 ? 'Fear'           : 'Extreme Fear';
+        fearGreedIndex >= 55 ? 'Greed' :
+        fearGreedIndex >= 45 ? 'Neutral' :
+        fearGreedIndex >= 25 ? 'Fear' : 'Extreme Fear';
 
-      const volumeChange = parseFloat((avgChange * 0.6).toFixed(2));
+      const btcMarketCap  = btcData.marketCap  || btcData.price  * 19_000_000 || 0;
+      const ethMarketCap  = ethData.marketCap  || ethData.price  * 120_000_000 || 0;
+      const btcDominance  = totalMarketCap > 0 ? parseFloat(((btcMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
+      const ethDominance  = totalMarketCap > 0 ? parseFloat(((ethMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
 
-      const summary = {
-        // totalMarketCap intentionally omitted — Kraken does not provide cap data
-        // Frontend checks for this and shows volume instead
-        totalMarketCap:    null,
-        totalVolume24h:    parseFloat(totalVolume24h.toFixed(2)),
-        volume24h:         parseFloat(totalVolume24h.toFixed(2)),
-        marketCapChange:   parseFloat(avgChange.toFixed(2)),
-        volumeChange,
-        btcDominance:      null,  // not calculable without market cap
-        fearGreedIndex,
-        fearGreedLabel,
-        topGainer:  topGainer || null,
-        topLoser:   topLoser  || null,
-        assetCount: entries.length,
-        dataSource: 'kraken',
-      };
-
-      return res.json({ status: 'success', data: summary });
+      return res.json({
+        status: 'success',
+        data: {
+          totalMarketCap,
+          volume24h: totalVolume24h,
+          topGainer,
+          topLoser,
+          fearGreedIndex,
+          fearGreedLabel,
+          btcDominance,
+          ethDominance,
+          altcoinDominance: parseFloat((100 - btcDominance - ethDominance).toFixed(1)),
+          timeframe,
+          lastUpdated: new Date().toISOString(),
+        }
+      });
     } catch (error) {
       next(error);
     }
