@@ -74,17 +74,33 @@ class PortfolioService {
       }];
     }
 
-    // If no real history yet, generate synthetic history from portfolio value
+    // If no real history yet, build synthetic from portfolio cost basis
     if (history.length <= 1) {
       const currentValue = portfolio.totalValue || 0;
+      const totalCost    = portfolio.totalCost   || 0;
+
       if (currentValue > 0) {
+        // Find earliest asset purchase date (or fall back to `days` ago)
+        let earliestMs = Date.now() - days * 24 * 60 * 60 * 1000;
+        for (const asset of (portfolio.assets || [])) {
+          if (asset.purchaseDate) {
+            const ms = new Date(asset.purchaseDate).getTime();
+            if (ms < earliestMs) earliestMs = ms;
+          }
+        }
+
+        const spanMs    = Date.now() - earliestMs;
+        const numPoints = Math.min(days, Math.max(2, Math.ceil(spanMs / (24 * 60 * 60 * 1000))));
+        const startValue = totalCost > 0 ? totalCost : currentValue * 0.9;
+
         const syntheticPoints = [];
-        for (let i = days; i >= 0; i--) {
-          const ts = Date.now() - i * 24 * 60 * 60 * 1000;
-          // Slight random walk backward — gives chart shape until real history accumulates
-          const noise = 1 + (Math.random() - 0.5) * 0.01;
-          const factor = i === 0 ? 1 : Math.pow(noise, i);
-          syntheticPoints.push({ timestamp: ts, value: parseFloat((currentValue * factor).toFixed(2)) });
+        for (let i = 0; i <= numPoints; i++) {
+          const fraction = i / numPoints;
+          const ts       = earliestMs + fraction * spanMs;
+          // Linear interpolation from cost basis to current value + slight noise
+          const noise    = 1 + (Math.random() - 0.48) * 0.015;
+          const value    = parseFloat((startValue + (currentValue - startValue) * fraction * noise).toFixed(2));
+          syntheticPoints.push({ timestamp: ts, value: Math.max(0, value) });
         }
         history = syntheticPoints;
       } else {
