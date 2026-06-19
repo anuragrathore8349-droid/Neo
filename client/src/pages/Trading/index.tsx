@@ -255,6 +255,14 @@ const Trading: React.FC = () => {
   // ── Place order ───────────────────────────────────────────────────────────
   const handlePlaceOrder = useCallback(async (order: any) => {
     if (!selectedAsset) return;
+    
+    if (!isPaperMode) {
+      const confirmed = window.confirm(
+        'You are placing a LIVE trade that will use REAL funds on an exchange. Continue?'
+      );
+      if (!confirmed) return;
+    }
+    
     setIsOrdersLoading(true);
     try {
       if (isPaperMode) {
@@ -285,7 +293,18 @@ const Trading: React.FC = () => {
       }
       setTimeout(() => fetchOrders(selectedAsset.symbol), 1500);
     } catch (err: any) {
-      setError(err?.message || 'Failed to place order. Please try again.');
+      let errorMessage = err?.message || 'Failed to place order. Please try again.';
+      
+      // Enhanced error detection for API/authentication issues
+      const isApiError = errorMessage.toLowerCase().includes('api') || 
+                        errorMessage.toLowerCase().includes('key') || 
+                        errorMessage.toLowerCase().includes('auth');
+      
+      if (isApiError && !isPaperMode) {
+        errorMessage = 'Live trading requires exchange API keys configured on the server. Switch to Paper Mode to practice safely.';
+      }
+      
+      setError(errorMessage);
       setTimeout(() => setError(null), 5000);
     } finally {
       setIsOrdersLoading(false);
