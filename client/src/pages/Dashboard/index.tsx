@@ -281,8 +281,8 @@ const Dashboard: React.FC = () => {
               return { status: 'success', data: formatted };
             })
             .catch((error) => {
-              console.warn('AI insights fetch failed, using fallback:', error);
-              return { status: 'error', data: fallbackAiInsights };
+              console.warn('AI insights fetch failed (non-critical):', error);
+              return { status: 'error', data: [] };
             })
         ]);
 
@@ -328,7 +328,7 @@ const Dashboard: React.FC = () => {
             setAiInsights(aiInsightsData.value.data);
             console.log('✓ AI Insights loaded from /api/ai/news/analysis:', aiInsightsData.value.data.length, 'insights');
           } else {
-            console.warn('AI Insights returned empty array, using fallback');
+            console.warn('AI Insights returned empty array — no insights to show');
           }
         } else if (aiInsightsData.status === 'rejected') {
           console.warn('AI Insights fetch failed:', aiInsightsData.reason);
