@@ -549,8 +549,14 @@ class AIService {
   async getSentimentBySource(symbol, source, timeframe) {
     switch (source) {
       case 'news':
+        if (!this.hasOpenAI) {
+          return { source: 'news', score: 0, label: 'neutral', confidence: 0, note: 'OpenAI required for news sentiment' };
+        }
         return this.getNewsSentiment(symbol, timeframe);
       case 'social':
+        if (!this.hasOpenAI) {
+          return { source: 'social', score: 0, label: 'neutral', confidence: 0, note: 'OpenAI required for social sentiment' };
+        }
         return this.getSocialSentiment(symbol, timeframe);
       case 'technical':
         return this.getTechnicalSentiment(symbol, timeframe);
