@@ -56,7 +56,14 @@ export const ProtocolCard: React.FC<ProtocolCardProps> = ({ protocol, onViewDeta
         </div>
         <div className="space-y-1">
           <p className="text-gray-400 text-sm">APY</p>
-          <p className="text-white text-lg font-semibold">{protocol.apy}</p>
+          <div className="flex items-center gap-1">
+            {!protocol.isLive && (
+              <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1 rounded">est.</span>
+            )}
+            <p className={`text-lg font-semibold ${protocol.apy !== null ? 'text-green-400' : 'text-gray-500'}`}>
+              {protocol.apy !== null ? `${Number(protocol.apy).toFixed(2)}%` : '—'}
+            </p>
+          </div>
         </div>
       </div>
 
