@@ -2,6 +2,7 @@ const express = require('express');
 const { validateRequest } = require('../middlewares/validator.middleware');
 const { authMiddleware } = require('../middlewares/auth.middleware');
 const userController = require('../controllers/user.controller');
+const { avatarUpload } = require('../controllers/user.controller');
 const { userSchemas } = require('../validators/user.validator');
 
 const router = express.Router();
@@ -17,6 +18,12 @@ router.get('/profile',
 router.put('/profile',
   validateRequest(userSchemas.updateProfile),
   userController.updateProfile
+);
+
+// Avatar upload route
+router.post('/avatar',
+  avatarUpload,
+  userController.uploadAvatar
 );
 
 // Password routes
