@@ -9,8 +9,12 @@ const { authMiddleware } = require('../middlewares/auth.middleware');
 // Get all available plans
 router.get('/plans', paymentController.getAvailablePlans);
 
-// Stripe webhook (must be before authenticate middleware)
-router.post('/webhook', express.raw({ type: 'application/json' }), paymentController.handleStripeWebhook);
+// ⚠️ Webhook must use raw body — register BEFORE express.json() routes
+router.post(
+  '/webhook',
+  express.raw({ type: 'application/json' }),
+  paymentController.handleWebhook
+);
 
 /**
  * Protected routes (require authentication)
