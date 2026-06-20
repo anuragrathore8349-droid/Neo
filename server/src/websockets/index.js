@@ -25,8 +25,16 @@ class WebSocketServer {
   }
 
   setupMiddleware() {
+    // Public namespaces — no auth required
+    const PUBLIC_NAMESPACES = ['/market'];
+
     // Authentication middleware
     this.io.use(async (socket, next) => {
+      // Skip auth for public namespaces
+      if (PUBLIC_NAMESPACES.includes(socket.nsp.name)) {
+        return next();
+      }
+
       try {
         const token = socket.handshake.auth.token;
         if (!token) {
@@ -44,7 +52,7 @@ class WebSocketServer {
 
     // Logging middleware
     this.io.use((socket, next) => {
-      logger.info(`New WebSocket connection: ${socket.id}`, {
+      logger.info(`New WebSocket connection: ${socket.id} on ${socket.nsp.name}`, {
         userId: socket.user?.userId,
         transport: socket.conn.transport.name
       });
