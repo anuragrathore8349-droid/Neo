@@ -12,6 +12,7 @@ const { connectDB } = require('./config/database');
 const externalContentService = require('./services/external-content.service');
 const { startPriceBroadcast } = require('./jobs/marketData.job');
 const portfolioHistoryJob = require('./jobs/portfolio-history.job');
+const { checkPriceAlerts } = require('./jobs/alertCheck.job');
 const cron = require('node-cron');
 // Initialize express app
 const app = express();
@@ -114,6 +115,16 @@ async function startServer() {
     } catch (err) {
       console.error('⚠️ Price broadcast failed to start:', err.message);
     }
+
+    // Schedule price alert checking every minute
+    cron.schedule('*/1 * * * *', async () => {
+      try {
+        await checkPriceAlerts();
+      } catch (err) {
+        console.error('⚠️ Price alert check failed:', err.message);
+      }
+    });
+    console.log('✅ Price alert checker scheduled (every minute)');
 
     // Schedule daily portfolio snapshot at 00:00 UTC
     cron.schedule('0 0 * * *', async () => {
