@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { ethers } from 'ethers';
+import { getTransactionStatus } from '../../../services/wallet.service';
 
 interface SendModalProps {
   isOpen: boolean;
@@ -102,9 +103,6 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
       });
 
       if (!response.ok) throw new Error('Failed to save transaction record');
-
-      // Import wallet service for polling
-      const { getTransactionStatus } = await import('../../services/wallet.service');
 
       // Poll Etherscan for confirmation (max 60s)
       let attempts = 0;
