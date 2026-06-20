@@ -94,6 +94,19 @@ class WalletController {
       });
     } catch (error) { next(error); }
   }
+
+  async getTransactionStatus(req, res, next) {
+    try {
+      const { txHash, network } = req.query;
+      if (!txHash) return res.status(400).json({ status: 'error', message: 'txHash required' });
+
+      const blockchainTransactionService = require('../../services/blockchain-transaction.service');
+      const status = await blockchainTransactionService.getTransactionReceipt(txHash, network);
+      res.json({ status: 'success', data: status });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new WalletController();
