@@ -156,15 +156,26 @@ class AIService {
    * @param {String} timeframe - Historical analysis period
    * @returns {Promise<Object>} Risk metrics and recommendations
    */
-  async getRiskAssessment(assets, timeframe = '30d') {
+  async getRiskAssessment(userId) {
     try {
-      logger.debug(`Performing risk assessment for ${assets.length} assets`);
+      const portfolioService = require('./portfolio.service');
+      const assets = await portfolioService.getAllAssets(userId).catch(() => []);
 
-      if (!Array.isArray(assets) || assets.length === 0) {
-        throw new Error('Assets array is required');
+      // ✅ Guard: return safe default if no assets
+      if (!assets || assets.length === 0) {
+        return {
+          overallRisk: 'unknown',
+          riskScore: 0,
+          factors: [],
+          recommendations: ['Add assets to your portfolio to get a risk assessment.'],
+          lastUpdated: new Date().toISOString(),
+        };
       }
 
+      logger.debug(`Performing risk assessment for ${assets.length} assets`);
+
       // Helper to parse timeframe and calculate dates
+      const timeframe = '30d';
       const getDateRange = (tf) => {
         const today = new Date();
         const days = parseInt(tf) || 365;
