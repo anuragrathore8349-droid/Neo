@@ -1,48 +1,17 @@
-const express = require('express');
-const { validateRequest } = require('../middlewares/validator.middleware');
-const { authMiddleware } = require('../middlewares/auth.middleware');
-const analyticsController = require('../controllers/analytics.controller');
+const express              = require('express');
+const { authMiddleware }   = require('../middlewares/auth.middleware');
+const analyticsController  = require('../controllers/analytics.controller');
+const { validateRequest }  = require('../middlewares/validator.middleware');
 const { analyticsSchemas } = require('../validators/analytics.validator');
 
 const router = express.Router();
-
-// Apply auth middleware to all routes
 router.use(authMiddleware);
 
-// Performance analytics
-router.get('/performance',
-  validateRequest(analyticsSchemas.getPerformance),
-  analyticsController.getPerformance
-);
-
-// Risk assessment
-router.get('/risk',
-  validateRequest(analyticsSchemas.getRisk),
-  analyticsController.getRisk
-);
-
-// AI price predictions
-router.get('/predictions',
-  validateRequest(analyticsSchemas.getPredictions),
-  analyticsController.getPredictions
-);
-
-// Market sentiment analysis
-router.get('/sentiment',
-  validateRequest(analyticsSchemas.getSentiment),
-  analyticsController.getSentiment
-);
-
-// Investment opportunities
-router.get('/opportunities',
-  validateRequest(analyticsSchemas.getOpportunities),
-  analyticsController.getOpportunities
-);
-
-// Custom analytics report
-router.post('/custom',
-  validateRequest(analyticsSchemas.generateCustomReport),
-  analyticsController.generateCustomReport
-);
+router.get('/performance',   validateRequest(analyticsSchemas.getPerformance),   analyticsController.getPerformanceAnalytics);
+router.get('/risk',          validateRequest(analyticsSchemas.getRisk),           analyticsController.getRiskMetrics);
+router.get('/allocation',    analyticsController.getAssetAllocation);
+router.get('/correlation',   analyticsController.getCorrelationMatrix);   // ← WAS MISSING
+router.get('/benchmark',     analyticsController.getBenchmarkComparison); // ← WAS MISSING
+router.get('/tax',           analyticsController.getTaxReport);
 
 module.exports = router;
