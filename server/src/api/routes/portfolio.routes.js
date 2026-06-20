@@ -1,53 +1,34 @@
-const express = require('express');
-const multer = require('multer');
-const { validateRequest } = require('../middlewares/validator.middleware');
+const express    = require('express');
 const { authMiddleware } = require('../middlewares/auth.middleware');
+const { featureAccess } = require('../middlewares/feature-access.middleware');
 const portfolioController = require('../controllers/portfolio.controller');
+const { validateRequest } = require('../middlewares/validator.middleware');
 const { portfolioSchemas } = require('../validators/portfolio.validator');
 
 const router = express.Router();
-
-// Configure multer for CSV uploads
-const storage = multer.memoryStorage();
-const upload = multer({ 
-  storage,
-  fileFilter: (req, file, cb) => {
-    if (!file.originalname.endsWith('.csv')) {
-      cb(new Error('Only CSV files are allowed'));
-    } else {
-      cb(null, true);
-    }
-  }
-});
-
-// Apply auth middleware to all routes
 router.use(authMiddleware);
 
-// Portfolio management
-router.post('/',
-  validateRequest(portfolioSchemas.createPortfolio),
-  portfolioController.createPortfolio
-);
+// Summary & overview
+router.get('/',           portfolioController.getPortfolioSummary);
+router.get('/assets',     portfolioController.getAllAssets);
+router.get('/history',    portfolioController.getPortfolioHistory);
+router.get('/export',     portfolioController.getPortfolioExport);
+router.get('/metrics',    portfolioController.getPerformanceMetrics);
+router.get('/rebalance',  portfolioController.getRebalanceSuggestions);
 
-// CSV Import endpoint
-router.post('/import/csv',
-  upload.single('file'),
-  portfolioController.importCSV
-);
+// Asset management — ADDED
+router.post('/assets',         validateRequest(portfolioSchemas.addAsset),    portfolioController.addAsset);
+router.put('/assets/:id',      validateRequest(portfolioSchemas.updateAsset), portfolioController.updateAsset);
+router.delete('/assets/:id',   portfolioController.deleteAsset);
 
-// Add asset to portfolio
-router.post('/assets',
-  portfolioController.addAssetToPortfolio
-);
+// Asset price history
+router.get('/assets/:symbol/history', portfolioController.getAssetPriceHistory);
 
-// Delete an asset from portfolio
-router.delete('/assets/:assetId',
-  portfolioController.removeAssetFromPortfolio
-);
+// Transactions (CSV import)
+router.get('/transactions',  portfolioController.getTransactions);
+router.post('/transactions/import', portfolioController.importTransactionsCSV);
 
-// Update asset (quantity, cost basis, notes)
-router.patch('/assets/:assetId',
-  portfolioController.updateAsset
+module.exports = router;
 );
 
 router.put('/:id',
