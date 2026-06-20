@@ -1,83 +1,58 @@
 const analyticsService = require('../../services/analytics.service');
-const { logger } = require('../middlewares/logger.middleware');
 
 class AnalyticsController {
-  async getPerformance(req, res, next) {
+  async getPerformanceAnalytics(req, res, next) {
     try {
-      const { timeframe, metrics } = req.validatedData.query || {};
-      const performance = await analyticsService.getPerformanceAnalytics(
-        req.user.userId,
-        timeframe,
-        metrics
+      const { timeframe = '1m', metrics } = req.validatedData?.query || req.query;
+      const data = await analyticsService.getPerformanceAnalytics(
+        req.user.userId, timeframe, metrics ? metrics.split(',') : ['returns']
       );
-      res.json({
-        status: 'success',
-        data: performance
-      });
-    } catch (error) {
-      next(error);
-    }
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
   }
 
-  async getRisk(req, res, next) {
+  async getRiskMetrics(req, res, next) {
     try {
-      const { assets, timeframe } = req.validatedData.query || {};
-      const risk = await analyticsService.getRiskAssessment(
-        req.user.userId,
-        assets,
-        timeframe
-      );
-      res.json({
-        status: 'success',
-        data: risk
-      });
-    } catch (error) {
-      next(error);
-    }
+      const { timeframe = '3m' } = req.validatedData?.query || req.query;
+      const data = await analyticsService.getRiskMetrics(req.user.userId, timeframe);
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
   }
 
-  async getPredictions(req, res, next) {
+  async getAssetAllocation(req, res, next) {
     try {
-      const { symbol, timeframe } = req.validatedData.query || {};
-      const predictions = await analyticsService.getPricePredictions(
-        symbol,
-        timeframe
-      );
-      res.json({
-        status: 'success',
-        data: predictions
-      });
-    } catch (error) {
-      next(error);
-    }
+      const data = await analyticsService.getAssetAllocation(req.user.userId);
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
   }
 
-  async getSentiment(req, res, next) {
+  async getCorrelationMatrix(req, res, next) {
     try {
-      const { symbol, sources } = req.validatedData.query || {};
-      const sentiment = await analyticsService.getMarketSentiment(
-        symbol,
-        sources
-      );
-      res.json({
-        status: 'success',
-        data: sentiment
-      });
-    } catch (error) {
-      next(error);
-    }
+      const data = await analyticsService.getCorrelationMatrix(req.user.userId);
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
   }
 
-  async getOpportunities(req, res, next) {
+  async getBenchmarkComparison(req, res, next) {
     try {
-      const { type, filters } = req.validatedData.query || {};
-      const opportunities = await analyticsService.getInvestmentOpportunities(
-        req.user.userId,
-        type,
-        filters
+      const { timeframe = '1m', benchmark = 'BTC' } = req.query;
+      const data = await analyticsService.getBenchmarkComparison(
+        req.user.userId, timeframe, benchmark
       );
-      res.json({
-        status: 'success',
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
+  }
+
+  async getTaxReport(req, res, next) {
+    try {
+      const { year } = req.query;
+      const data = await analyticsService.getTaxReport(req.user.userId, year || new Date().getFullYear());
+      res.json({ status: 'success', data });
+    } catch (error) { next(error); }
+  }
+}
+
+module.exports = new AnalyticsController();
         data: opportunities
       });
     } catch (error) {
