@@ -49,7 +49,7 @@ router.get('/api-keys',
 
 router.post('/api-keys',
   validateRequest(userSchemas.createApiKey),
-  userController.createApiKey
+  userController.saveApiKey
 );
 
 router.delete('/api-keys/:id',
