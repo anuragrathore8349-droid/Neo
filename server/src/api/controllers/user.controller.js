@@ -1,5 +1,25 @@
 const userService = require('../../services/user.service');
 const { logger } = require('../middlewares/logger.middleware');
+const multer = require('multer');
+const path   = require('path');
+const fs     = require('fs');
+
+const uploadDir = path.join(__dirname, '../../../uploads/avatars');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename:    (req, file, cb)   => cb(null, `${req.user.userId}-${Date.now()}${path.extname(file.originalname)}`),
+});
+
+const avatarUpload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+}).single('avatar');
 
 class UserController {
   async getProfile(req, res, next) {
@@ -23,6 +43,33 @@ class UserController {
       res.json({
         status: 'success',
         data: profile
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async uploadAvatar(req, res, next) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'No file uploaded'
+        });
+      }
+      
+      const avatarPath = `/uploads/avatars/${req.file.filename}`;
+      const profile = await userService.updateProfile(
+        req.user.userId,
+        { avatar: avatarPath }
+      );
+      
+      res.json({
+        status: 'success',
+        data: {
+          avatar: avatarPath,
+          profile
+        }
       });
     } catch (error) {
       next(error);
@@ -265,3 +312,4 @@ class UserController {
 }
 
 module.exports = new UserController();
+module.exports.avatarUpload = avatarUpload;
