@@ -14,7 +14,7 @@ class AnalyticsController {
   async getRiskMetrics(req, res, next) {
     try {
       const { timeframe = '3m' } = req.validatedData?.query || req.query;
-      const data = await analyticsService.getRiskMetrics(req.user.userId, timeframe);
+      const data = await analyticsService.getRiskAssessment(req.user.userId, [], timeframe);
       res.json({ status: 'success', data });
     } catch (error) { next(error); }
   }
@@ -49,30 +49,6 @@ class AnalyticsController {
       const data = await analyticsService.getTaxReport(req.user.userId, year || new Date().getFullYear());
       res.json({ status: 'success', data });
     } catch (error) { next(error); }
-  }
-}
-
-module.exports = new AnalyticsController();
-        data: opportunities
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async generateCustomReport(req, res, next) {
-    try {
-      const report = await analyticsService.generateCustomReport(
-        req.user.userId,
-        req.validatedData.body
-      );
-      res.json({
-        status: 'success',
-        data: report
-      });
-    } catch (error) {
-      next(error);
-    }
   }
 }
 
