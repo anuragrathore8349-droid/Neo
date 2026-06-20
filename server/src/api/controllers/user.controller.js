@@ -120,14 +120,31 @@ class UserController {
 
   async getApiKeys(req, res, next) {
     try {
-      const apiKeys = await userService.getApiKeys(req.user.userId);
-      res.json({
-        status: 'success',
-        data: apiKeys
-      });
-    } catch (error) {
-      next(error);
-    }
+      const ApiKey = require('../../models/api-key.model');
+      const keys = await ApiKey.find({ userId: req.user.userId }).select('-secret');
+      res.json({ status: 'success', data: keys });
+    } catch (error) { next(error); }
+  }
+
+  async saveApiKey(req, res, next) {
+    try {
+      const ApiKey = require('../../models/api-key.model');
+      const { exchange, apiKey, secret, label } = req.body;
+      const key = await ApiKey.findOneAndUpdate(
+        { userId: req.user.userId, exchange },
+        { apiKey, secret, label, isActive: true, updatedAt: new Date() },
+        { upsert: true, new: true }
+      );
+      res.json({ status: 'success', data: { id: key._id, exchange: key.exchange, label: key.label } });
+    } catch (error) { next(error); }
+  }
+
+  async deleteApiKey(req, res, next) {
+    try {
+      const ApiKey = require('../../models/api-key.model');
+      await ApiKey.findOneAndDelete({ _id: req.params.id, userId: req.user.userId });
+      res.json({ status: 'success', message: 'API key deleted' });
+    } catch (error) { next(error); }
   }
 
   async createApiKey(req, res, next) {
@@ -139,21 +156,6 @@ class UserController {
       res.json({
         status: 'success',
         data: apiKey
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async deleteApiKey(req, res, next) {
-    try {
-      await userService.deleteApiKey(
-        req.user.userId,
-        req.validatedData.params.id
-      );
-      res.json({
-        status: 'success',
-        message: 'API key deleted successfully'
       });
     } catch (error) {
       next(error);
