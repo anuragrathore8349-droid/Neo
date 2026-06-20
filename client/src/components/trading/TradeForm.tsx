@@ -83,7 +83,10 @@ const TradeForm: React.FC<TradeFormProps> = ({
 
     if (isPaperMode) {
       onPlaceOrder(order);
-      setAmount(''); setStopLoss(''); setTakeProfit('');
+      // ── Reset form after successful paper trade ──────────────────────────
+      setAmount('');
+      setStopLoss('');
+      setTakeProfit('');
     } else {
       setPendingOrder(order);
     }
