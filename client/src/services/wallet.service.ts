@@ -158,3 +158,12 @@ export async function updateAddressInBook(
 export async function deleteAddressFromBook(id: string): Promise<{ status: string }> {
   return apiFetch(`/api/addressbook/${id}`, { method: 'DELETE' });
 }
+
+// ── Transaction Status Polling ────────────────────────────────────────────
+
+export async function getTransactionStatus(txHash: string, network: string) {
+  const response = await apiFetch(
+    `/api/wallet/transactions/status?txHash=${encodeURIComponent(txHash)}&network=${encodeURIComponent(network)}`
+  );
+  return response.data;
+}
