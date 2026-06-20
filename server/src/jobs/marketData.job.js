@@ -46,37 +46,47 @@ marketDataQueue.process('trades', async (job) => {
   }
 });
 
-// ── Live price broadcast (fixes the WebSocket timeout) ────────────────────────
+// ── Live price broadcast ───────────────────────────────────────────────────────
 marketDataQueue.process('priceUpdate', async (job) => {
   const { symbols } = job.data;
   try {
     const prices = await krakenService.getLivePrices(symbols);
+    const marketNsp = global.wsServer?.io?.of('/market');
+
     for (const [symbol, data] of Object.entries(prices)) {
       if (!data || data.price === null || data.price === undefined) continue;
 
       const priceData = {
+        symbol,
         price:     data.price,
         change24h: data.change24h ?? 0,
-        volume24h: data.volume24h ?? 0
+        volume24h: data.volume24h ?? 0,
+        timestamp: Date.now(),
       };
 
-      if (redisClient && redisClient.isOpen) {
-        await redisClient.setEx(`price:${symbol}`, 35, JSON.stringify({ ...priceData, timestamp: Date.now() }));
+      // Cache in Redis
+      if (redisClient?.isOpen) {
+        await redisClient.setEx(`price:live:${symbol}`, 60, JSON.stringify(priceData)).catch(() => {});
       }
 
-      if (global.io) {
-        // Pass full priceData object — market.handler now accepts this shape
-        global.io.of('/market').to(`price:${symbol}`).emit('priceUpdate', {
-          symbol,
-          price:     priceData.price,
-          change24h: priceData.change24h,
-          volume24h: priceData.volume24h,
-          timestamp: Date.now()
-        });
+      // ✅ Emit to room-specific subscribers only
+      if (marketNsp) {
+        marketNsp.to(`price:${symbol}`).emit('priceUpdate', priceData);
+      }
+
+      // Also update global market handler broadcast
+      if (global.marketHandler) {
+        global.marketHandler.broadcastPriceUpdate(symbol, priceData);
       }
     }
+    
     // Check price alerts after every broadcast
     await checkPriceAlerts(prices);
+    
+    // ✅ NEW: Trigger portfolio updates for all users when prices change
+    // This ensures real-time P&L updates on the Dashboard
+    await triggerPortfolioUpdates(symbols);
+    
     logger.debug(`Price broadcast done for ${symbols.join(', ')}`);
   } catch (err) {
     logger.error('priceUpdate job failed:', err.message);
@@ -124,6 +134,132 @@ const startPriceBroadcast = async () => {
     logger.error('Failed to start price broadcast:', err.message);
   }
 };
+
+// ── Portfolio Update Trigger ──────────────────────────────────────────────────
+// ✅ NEW: When prices change, recalculate all user portfolios and broadcast updates
+const Portfolio = require('../models/portfolio.model');
+const PortfolioHistory = require('../models/portfolio-history.model');
+const portfolioService = require('../services/portfolio.service');
+const { subDays, startOfDay } = require('date-fns');
+
+async function triggerPortfolioUpdates(changedSymbols) {
+  try {
+    // Find all portfolios that contain any of the changed symbols
+    const portfolios = await Portfolio.find({
+      'assets.symbol': { $in: changedSymbols }
+    });
+
+    if (!portfolios || portfolios.length === 0) {
+      return; // No portfolios affected
+    }
+
+    logger.debug(`Updating ${portfolios.length} portfolios affected by price changes in: ${changedSymbols.join(', ')}`);
+
+    // Recalculate metrics for each affected portfolio and broadcast update
+    for (const portfolio of portfolios) {
+      try {
+        // Recalculate metrics with new prices (already updated by updatePortfolioMetrics)
+        await portfolioService.updatePortfolioMetrics(portfolio);
+
+        // Calculate change percentages from history efficiently
+        const history = await PortfolioHistory.find({
+          portfolioId: portfolio._id,
+          timestamp: { $gte: subDays(startOfDay(new Date()), 30) }
+        }).sort({ timestamp: 1 }).lean();
+
+        const dailyChange = calculateChangeFromHistory(history, 1);
+        const weeklyChange = calculateChangeFromHistory(history, 7);
+        
+        // Monthly: first vs last in history
+        let monthlyChange = { value: 0, percentage: 0 };
+        if (history && history.length > 1) {
+          const currentValue = history[history.length - 1]?.totalValue || portfolio.totalValue || 0;
+          const oldestValue = history[0]?.totalValue || 0;
+          if (oldestValue > 0) {
+            const change = currentValue - oldestValue;
+            const percentage = (change / oldestValue) * 100;
+            monthlyChange = {
+              value: Number(change.toFixed(2)),
+              percentage: Number(percentage.toFixed(2))
+            };
+          }
+        }
+
+        // Broadcast the updated summary with all P&L data
+        if (global.portfolioHandler) {
+          global.portfolioHandler.broadcastPortfolioUpdate(
+            portfolio._id.toString(),
+            {
+              portfolioId: portfolio._id.toString(),
+              totalValue: portfolio.totalValue || 0,
+              totalCost: portfolio.totalCost || 0,
+              totalProfit: portfolio.totalProfit || 0,
+              totalProfitPercentage: portfolio.totalProfitPercentage || 0,
+              allTimeProfit: portfolio.totalProfit || 0,
+              allTimeProfitPercentage: portfolio.totalProfitPercentage || 0,
+              dailyChange: dailyChange.value,
+              dailyChangePercentage: dailyChange.percentage,
+              weeklyChange: weeklyChange.value,
+              weeklyChangePercentage: weeklyChange.percentage,
+              monthlyChange: monthlyChange.value,
+              monthlyChangePercentage: monthlyChange.percentage,
+              assetCount: portfolio.assets.length,
+              lastUpdated: portfolio.lastUpdated,
+              assets: portfolio.assets.map(a => ({
+                symbol: a.symbol,
+                currentPrice: a.currentPrice,
+                value: a.value,
+                profit: a.profit,
+                profitPercentage: a.profitPercentage,
+                change24h: a.change24h
+              }))
+            }
+          );
+        }
+
+        logger.debug(`Portfolio ${portfolio._id} metrics updated and broadcasted for user ${portfolio.userId}`);
+      } catch (err) {
+        logger.warn(`Failed to update portfolio ${portfolio._id}:`, err.message);
+        // Continue with other portfolios
+      }
+    }
+  } catch (err) {
+    logger.error('Portfolio update trigger failed:', err.message);
+    // Non-fatal error — don't let this crash the price broadcast
+  }
+}
+
+// Helper function to calculate change from history
+function calculateChangeFromHistory(history, days) {
+  if (!history || history.length < 1) {
+    return { value: 0, percentage: 0 };
+  }
+
+  const current = history[history.length - 1]?.totalValue || 0;
+  if (current <= 0) {
+    return { value: 0, percentage: 0 };
+  }
+
+  let past = null;
+  if (days === 1) {
+    past = history[history.length - 2]?.totalValue;
+  } else if (history.length > 1) {
+    const index = Math.max(0, history.length - days);
+    past = history[index]?.totalValue;
+  }
+
+  if (!past || past <= 0) {
+    return { value: 0, percentage: 0 };
+  }
+
+  const change = current - past;
+  const percentage = (change / past) * 100;
+
+  return {
+    value: Number(change.toFixed(2)),
+    percentage: Number(percentage.toFixed(2))
+  };
+}
 
 // ── Price Alert Checker ────────────────────────────────────────────────────
 const MarketAlert = require('../models/market-alert.model');
