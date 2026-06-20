@@ -368,9 +368,13 @@ const AIInsights: React.FC = () => {
       console.log('Fetching market sentiments...');
       
       const symbols = ['BTC', 'ETH', 'ADA'];
+      const sources = import.meta.env.VITE_ENABLE_AI_INSIGHTS === 'true'
+        ? 'technical,news,social'
+        : 'technical';
+      
       const sentimentData = await Promise.all(
         symbols.map(symbol => 
-          aiService.getMarketSentiment(symbol, 'social,news', '24h')
+          aiService.getMarketSentiment(symbol, sources, '24h')
             .catch(() => null)
         )
       );
