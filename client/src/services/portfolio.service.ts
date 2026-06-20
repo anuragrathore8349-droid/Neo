@@ -607,3 +607,63 @@ export async function importAssetsFromCSV(csvFile: File): Promise<{ status: stri
     };
   }
 }
+
+// ===== NEW FUNCTIONS FOR FILE 19 =====
+export interface AddAssetPayload {
+  symbol: string;
+  name?: string;
+  type?: 'crypto' | 'stock' | 'forex' | 'commodity';
+  amount: number;
+  costBasis: number;
+  purchaseDate?: string;
+}
+
+export async function addAsset(payload: AddAssetPayload): Promise<{ status: string; data?: any }> {
+  const response = await apiFetch('/api/portfolio/assets', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return { status: response.status || 'success', data: response.data };
+}
+
+export async function updateAsset(assetId: string, payload: Partial<AddAssetPayload>): Promise<{ status: string; data?: any }> {
+  const response = await apiFetch(`/api/portfolio/assets/${assetId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return { status: response.status || 'success', data: response.data };
+}
+
+export async function deleteAsset(assetId: string): Promise<{ status: string; message?: string }> {
+  const response = await apiFetch(`/api/portfolio/assets/${assetId}`, {
+    method: 'DELETE',
+  });
+  return { status: response.status || 'success', message: response.message };
+}
+
+export async function importTransactionsCSV(file: File): Promise<{ status: string; data?: any }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/portfolio/transactions/import`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}` },
+    body: formData,
+  });
+  const data = await response.json();
+  return { status: data.status || 'success', data: data.data };
+}
+
+export async function getCorrelationMatrix(): Promise<{ status: string; data?: any }> {
+  const response = await apiFetch('/api/analytics/correlation');
+  return { status: response.status || 'success', data: response.data };
+}
+
+export async function getBenchmarkComparison(timeframe: string, benchmark: string): Promise<{ status: string; data?: any }> {
+  const response = await apiFetch(`/api/analytics/benchmark?timeframe=${timeframe}&benchmark=${benchmark}`);
+  return { status: response.status || 'success', data: response.data };
+}
+
+export async function getTaxReport(year: number): Promise<{ status: string; data?: any }> {
+  const response = await apiFetch(`/api/analytics/tax?year=${year}`);
+  return { status: response.status || 'success', data: response.data };
+}
