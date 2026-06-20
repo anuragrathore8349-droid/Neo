@@ -489,46 +489,45 @@ async verifyWalletOwnership(address, signature) {
     try {
       const provider = ethereumProvider;
       if (!provider) {
-        logger.warn('No Ethereum provider available, skipping balance update');
-        return;
+        logger.warn('No Ethereum provider configured — skipping on-chain balance fetch');
+        return wallet;
       }
 
       const address = wallet.address;
       const balances = [];
 
-      // ETH balance
-      const ethBalance = await provider.getBalance(address);
-      balances.push({
-        symbol:    'ETH',
-        amount:    parseFloat(ethers.formatEther(ethBalance)),
-        updatedAt: new Date(),
-      });
+      // 1. ETH native balance
+      try {
+        const ethBalance = await provider.getBalance(address);
+        const ethFormatted = parseFloat(ethers.utils.formatEther(ethBalance));
+        if (ethFormatted > 0) {
+          balances.push({ symbol: 'ETH', amount: ethFormatted, usdValue: null });
+        }
+      } catch (e) {
+        logger.warn(`Failed to fetch ETH balance for ${address}: ${e.message}`);
+      }
 
-      // ERC-20 token balances (only on mainnet/mainnet-like networks)
-      const network = (wallet.network || '').toLowerCase();
-      const isMainnet = network === 'ethereum' || network === 'mainnet' || network === '1';
-
-      if (isMainnet) {
-        for (const token of KNOWN_TOKENS) {
-          try {
-            const contract = new ethers.Contract(token.address, ERC20_ABI, provider);
-            const raw      = await contract.balanceOf(address);
-            const amount   = parseFloat(ethers.utils.formatUnits(raw, token.decimals));
-            if (amount > 0) {
-              balances.push({ symbol: token.symbol, amount, updatedAt: new Date() });
-            }
-          } catch (tokenErr) {
-            logger.debug(`Could not fetch ${token.symbol} balance:`, tokenErr.message);
+      // 2. ERC-20 token balances
+      for (const token of KNOWN_TOKENS) {
+        try {
+          const contract = new ethers.Contract(token.address, ERC20_ABI, provider);
+          const raw = await contract.balanceOf(address);
+          const amount = parseFloat(ethers.utils.formatUnits(raw, token.decimals));
+          if (amount > 0) {
+            balances.push({ symbol: token.symbol, amount, usdValue: null });
           }
+        } catch (e) {
+          logger.warn(`Failed to fetch ${token.symbol} balance for ${address}: ${e.message}`);
         }
       }
 
       wallet.balances = balances;
+      wallet.lastSyncedAt = new Date();
+      await wallet.save();
+      return wallet;
     } catch (error) {
-      logger.warn('Could not update wallet balances (RPC unavailable):', error.message);
-      if (!wallet.balances || wallet.balances.length === 0) {
-        wallet.balances = [{ symbol: 'ETH', amount: 0, updatedAt: new Date() }];
-      }
+      logger.error('Error updating external wallet balances:', error);
+      return wallet;
     }
   }
 
