@@ -1,38 +1,24 @@
-const express = require('express');
-const router = express.Router();
-const paymentController = require('../controllers/payment.controller');
+const express          = require('express');
 const { authMiddleware } = require('../middlewares/auth.middleware');
+const paymentController  = require('../controllers/payment.controller');
 
-/**
- * Public routes
- */
-// Get all available plans
-router.get('/plans', paymentController.getAvailablePlans);
+const router = express.Router();
 
-// ⚠️ Webhook must use raw body — register BEFORE express.json() routes
+// ── Public (no auth) ─────────────────────────────────────────────────────────
+router.get('/plans', paymentController.getPlans);
+
+// ── Stripe Webhook (raw body, no auth, no JSON parser) ───────────────────────
 router.post(
   '/webhook',
   express.raw({ type: 'application/json' }),
   paymentController.handleWebhook
 );
 
-/**
- * Protected routes (require authentication)
- */
-
-// Get user's current subscription
-router.get('/subscription', authMiddleware, paymentController.getUserSubscription);
-
-// Create checkout session for plan upgrade
-router.post('/checkout', authMiddleware, paymentController.createCheckoutSession);
-
-// Cancel subscription
-router.post('/cancel', authMiddleware, paymentController.cancelSubscription);
-
-// Update payment method
-router.put('/payment-method', authMiddleware, paymentController.updatePaymentMethod);
-
-// Get billing history
-router.get('/billing-history', authMiddleware, paymentController.getBillingHistory);
+// ── Protected ────────────────────────────────────────────────────────────────
+router.use(authMiddleware);
+router.get('/subscription',          paymentController.getSubscription);
+router.post('/checkout',             paymentController.createCheckout);
+router.post('/cancel',               paymentController.cancelSubscription);
+router.post('/portal',               paymentController.createPortalSession);
 
 module.exports = router;
