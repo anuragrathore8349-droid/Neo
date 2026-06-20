@@ -18,6 +18,7 @@ const DEFAULT_SYMBOLS = [
 
 const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) => {
   const [items, setItems] = useState<TickerItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -38,9 +39,13 @@ const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) 
         })
         .filter(Boolean) as TickerItem[];
 
-      if (parsed.length > 0) setItems(parsed);
+      if (parsed.length > 0) {
+        setItems(parsed);
+        setIsLoading(false);
+      }
     } catch {
       // silent — ticker is non-critical
+      setIsLoading(false);
     }
   };
 
@@ -50,7 +55,25 @@ const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) 
     return () => clearInterval(intervalRef.current);
   }, []);
 
-  if (items.length === 0) return null;
+  if (isLoading || items.length === 0) {
+    return (
+      <div
+        className="w-full overflow-hidden bg-dark-900/90 border-b border-dark-700 backdrop-blur-sm"
+        style={{ height: 40 }}
+      >
+        <div className="flex items-center gap-8 h-full px-4">
+          {/* Show loading skeletons */}
+          {[1, 2, 3, 4, 5].map((i) => (
+            <span key={i} className="inline-flex items-center gap-2 shrink-0">
+              <span className="inline-block w-12 h-4 bg-gray-700 animate-pulse rounded" />
+              <span className="inline-block w-16 h-4 bg-gray-700 animate-pulse rounded" />
+              <span className="inline-block w-12 h-4 bg-gray-700 animate-pulse rounded" />
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   const fmt = (v: number) =>
     new Intl.NumberFormat('en-US', {
