@@ -25,6 +25,8 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
   const [gasPrice, setGasPrice] = useState('medium');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<'idle' | 'pending' | 'submitted' | 'confirmed'>('idle');
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const handleSend = async () => {
     setError(null);
@@ -43,7 +45,9 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
       return;
     }
 
-    setIsLoading(true);
+    setStatus('pending');
+    setTxHash(null);
+
     try {
       if (!window.ethereum) throw new Error('MetaMask not detected');
 
@@ -79,7 +83,9 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
       txData.gasLimit = gasEstimate;
 
       const tx = await signer.sendTransaction(txData);
-      toast.info(`Transaction sent! Hash: ${tx.hash}`);
+      setTxHash(tx.hash);
+      setStatus('submitted');
+      toast.info(`Transaction submitted! Hash: ${tx.hash}`);
 
       // Save to wallet service
       const response = await fetch('/api/wallet/withdraw', {
@@ -97,20 +103,40 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
 
       if (!response.ok) throw new Error('Failed to save transaction record');
 
-      await tx.wait();
-      toast.success('Transaction confirmed!');
-      
-      setRecipientAddress('');
-      setAmount('');
-      setGasPrice('medium');
-      onClose();
-      onSuccess?.();
+      // Import wallet service for polling
+      const { getTransactionStatus } = await import('../../services/wallet.service');
+
+      // Poll Etherscan for confirmation (max 60s)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const receipt = await getTransactionStatus(tx.hash, wallet.network);
+          if (receipt?.confirmed) {
+            setStatus('confirmed');
+            clearInterval(poll);
+            toast.success('Transaction confirmed!');
+            setRecipientAddress('');
+            setAmount('');
+            setGasPrice('medium');
+            setTimeout(() => onClose(), 2000);
+            onSuccess?.();
+          }
+        } catch {
+          // Keep polling
+        }
+        if (attempts >= 12) {
+          // 60s timeout (12 * 5s)
+          setStatus('submitted');
+          clearInterval(poll);
+          toast.warning('Transaction submitted. Check explorer for confirmation.');
+        }
+      }, 5000);
     } catch (err: any) {
       const msg = err?.message || err?.reason || 'Failed to send transaction';
       setError(msg);
+      setStatus('idle');
       toast.error(msg);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -127,7 +153,7 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
           <h2 className="text-xl font-bold text-white">Send Crypto</h2>
           <button
             onClick={onClose}
-            disabled={isLoading}
+            disabled={status !== 'idle'}
             className="p-2 hover:bg-dark-800 rounded-lg text-dark-400 disabled:opacity-50"
           >
             <X size={20} />
@@ -150,7 +176,7 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
               value={selectedAsset}
               onChange={(e) => setSelectedAsset(e.target.value)}
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-primary"
-              disabled={isLoading}
+              disabled={status !== 'idle'}
             >
               <option value="">Select asset</option>
               {wallet.balances?.map(b => (
@@ -175,7 +201,7 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
               value={recipientAddress}
               onChange={(e) => setRecipientAddress(e.target.value)}
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-white placeholder-dark-500 focus:outline-none focus:border-primary"
-              disabled={isLoading}
+              disabled={status !== 'idle'}
             />
           </div>
 
@@ -189,7 +215,7 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
               onChange={(e) => setAmount(e.target.value)}
               step="0.0001"
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-white placeholder-dark-500 focus:outline-none focus:border-primary"
-              disabled={isLoading || !selectedAsset}
+              disabled={status !== 'idle' || !selectedAsset}
             />
             {estimatedUsd > 0 && (
               <p className="text-xs text-dark-400 mt-1">
@@ -205,7 +231,7 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
               value={gasPrice}
               onChange={(e) => setGasPrice(e.target.value)}
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-primary"
-              disabled={isLoading}
+              disabled={status !== 'idle'}
             >
               <option value="slow">Slow (~5 min)</option>
               <option value="medium">Medium (~3 min)</option>
@@ -217,19 +243,30 @@ const SendModal: React.FC<SendModalProps> = ({ isOpen, onClose, wallet, assetPri
           <div className="flex gap-3 pt-4">
             <button
               onClick={onClose}
-              disabled={isLoading}
+              disabled={status !== 'idle'}
               className="flex-1 bg-dark-800 hover:bg-dark-700 text-white rounded-lg py-2.5 font-medium disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={handleSend}
-              disabled={isLoading || !selectedAsset || !recipientAddress || !amount}
+              disabled={status !== 'idle' || !selectedAsset || !recipientAddress || !amount}
               className="flex-1 btn-primary py-2.5 font-medium disabled:opacity-50"
             >
-              {isLoading ? 'Sending...' : 'Send'}
+              {status === 'pending' && 'Preparing...'}
+              {status === 'submitted' && 'Confirming...'}
+              {status === 'confirmed' && 'Confirmed!'}
+              {status === 'idle' && 'Send'}
             </button>
           </div>
+
+          {/* Transaction Status */}
+          {txHash && (
+            <div className="text-xs text-center text-dark-400 p-2 bg-dark-800/50 rounded">
+              <p className="mb-1">TX Hash: {txHash.slice(0, 12)}...{txHash.slice(-10)}</p>
+              <p>Status: {status === 'confirmed' ? '✓ Confirmed' : status === 'submitted' ? 'Polling for confirmation...' : 'Pending'}</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
