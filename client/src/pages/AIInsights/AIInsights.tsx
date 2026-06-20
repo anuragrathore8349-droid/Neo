@@ -7,6 +7,7 @@ import StrategyCard from '../../components/ai/StrategyCard/StrategyCard';
 import MarketInsightCard from '../../components/ai/MarketInsightCard/MarketInsightCard';
 import { Brain, Target, TrendingUp, AlertTriangle, Lightbulb, LineChart as LineChartIcon } from 'lucide-react';
 import aiService from '../../services/ai.service';
+import { getMarketSummary } from '../../services/market.service';
 
 // Loading Skeleton Component
 const LoadingSkeleton = () => (
@@ -186,6 +187,10 @@ const TrendingCoins: React.FC<{ coins: any[]; loading?: boolean }> = ({ coins, l
 };
 
 const AIInsights: React.FC = () => {
+  // State for market summary data
+  const [marketSummaryData, setMarketSummaryData] = useState<any>(null);
+  const [marketSummaryLoading, setMarketSummaryLoading] = useState(true);
+
   // State for price predictions
   const [pricePredictions, setPricePredictions] = useState<any>(null);
   const [priceLoading, setPriceLoading] = useState(false);
@@ -227,6 +232,64 @@ const AIInsights: React.FC = () => {
   // State for trending coins
   const [trendingCoins, setTrendingCoins] = useState<any[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
+
+  // Helper: Get fear/greed label from numeric value
+  function getFearGreedLabel(value: number) {
+    if (value <= 25) return 'Extreme Fear';
+    if (value <= 45) return 'Fear';
+    if (value <= 55) return 'Neutral';
+    if (value <= 75) return 'Greed';
+    return 'Extreme Greed';
+  }
+
+  // Fetch market summary (BTC dominance, market cap, fear/greed index)
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSummary() {
+      try {
+        setMarketSummaryLoading(true);
+        const res = await getMarketSummary();
+        if (!cancelled) {
+          const d = res.data;
+          const fearGreedValue = d.fearGreedIndex ?? 50;
+          
+          // Set dominance data
+          setMarketSummaryData({
+            btcDominance: d.btcDominance ?? 50,
+            ethDominance: 12, // not in API, approximate
+            altcoinDominance: (100 - (d.btcDominance ?? 50) - 12).toFixed(1),
+            marketCapChange24h: 0,
+            totalMarketCapFormatted: d.totalMarketCap
+              ? `$${(d.totalMarketCap / 1e12).toFixed(2)}T`
+              : 'N/A',
+            totalVolumeFormatted: d.volume24h
+              ? `$${(d.volume24h / 1e9).toFixed(1)}B`
+              : 'N/A',
+            signal: '',
+          });
+
+          // Set fear & greed data for FearGreedCard
+          setFearGreed({
+            value: fearGreedValue,
+            zone: getFearGreedLabel(fearGreedValue),
+            change: 0,
+            history: [],
+            advice: 'Monitor market sentiment and adjust positions accordingly.',
+          });
+        }
+      } catch (e) {
+        console.error('Market summary fetch failed', e);
+      } finally {
+        if (!cancelled) setMarketSummaryLoading(false);
+      }
+    }
+    fetchSummary();
+    const interval = setInterval(fetchSummary, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   // Fetch price predictions for chart
   const fetchPricePredictions = useCallback(async () => {
@@ -650,7 +713,7 @@ const AIInsights: React.FC = () => {
         <FearGreedCard data={fearGreed} loading={fearGreedLoading} />
 
         {/* BTC Dominance */}
-        {!dominanceLoading && btcDominance && <DominanceBar data={btcDominance} />}
+        {!marketSummaryLoading && marketSummaryData && <DominanceBar data={marketSummaryData} />}
 
         {/* Trending Now */}
         <TrendingCoins coins={trendingCoins} loading={trendingLoading} />
