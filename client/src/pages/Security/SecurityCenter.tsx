@@ -50,10 +50,32 @@ const SecurityCenter: React.FC = () => {
   const [twoFaLoading, setTwoFaLoading] = useState(false);
   const [twoFaMessage, setTwoFaMessage] = useState<string | null>(null);
   const [removingSession, setRemovingSession] = useState<string | null>(null);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
+  const [secLoading, setSecLoading] = useState(true);
 
   const loadSecurityData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
+    
+    // Fetch devices and activity data
+    async function loadSecurity() {
+      setSecLoading(true);
+      try {
+        const [devRes, actRes] = await Promise.allSettled([
+          apiFetch('/api/user/devices'),
+          apiFetch('/api/user/activity'),
+        ]);
+        if (devRes.status === 'fulfilled') setDevices((devRes.value as any)?.data || []);
+        if (actRes.status === 'fulfilled') setActivity((actRes.value as any)?.data || []);
+      } catch (e) {
+        console.error('Security data load failed:', e);
+      } finally {
+        setSecLoading(false);
+      }
+    }
+    loadSecurity();
+    
     try {
       const [statusRes, sessionsRes] = await Promise.allSettled([
         apiFetch<any>('/api/user/security-status'),
