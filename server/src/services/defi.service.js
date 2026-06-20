@@ -355,14 +355,6 @@ class DefiService {
     return { positionId: position._id, status: 'pending_onchain',
       message: 'Confirm the harvest transaction in your wallet' };
   }
-    } else {
-      position.status = 'partial_exit';
-      position.asset.amount = remaining;
-    }
-    await position.save();
-    // Actual tx is handled client-side via WalletTxModal
-    return { positionId: position._id, remainingAmount: position.asset.amount };
-  }
 
   // ─── STAKING POSITIONS ───────────────────────────────────────────────────
   async getStakingPositions (userId) {
