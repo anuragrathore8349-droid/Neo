@@ -85,6 +85,32 @@ class TradingService {
   }
 
   /**
+   * Load per-user API keys for live trading
+   * Creates an authenticated exchange client with the user's own credentials
+   */
+  async loadUserApiKeys(userId, exchangeId) {
+    try {
+      const ApiKey = require('../models/api-key.model');
+      const record = await ApiKey.findOne({ userId, exchange: exchangeId, isActive: true });
+      if (!record) return null;
+
+      // Dynamically create authenticated exchange client with user's keys
+      const ExchangeClass = ccxt[exchangeId.toLowerCase()];
+      if (!ExchangeClass) return null;
+
+      return new ExchangeClass({
+        apiKey: record.apiKey,
+        secret: record.apiSecret,
+        password: record.passphrase || undefined,
+        enableRateLimit: true,
+      });
+    } catch (err) {
+      logger.warn(`Could not load user API keys for ${exchangeId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
    * Exchange-specific symbol mappings
    * Different exchanges use different symbols for the same asset
    */
@@ -183,105 +209,100 @@ class TradingService {
 
   async placeOrder(userId, orderData) {
     try {
-      // Check if paper trading mode is requested
       const isPaperTrade = orderData.mode === 'paper' || process.env.ENABLE_PAPER_TRADING === 'true';
 
-     if (isPaperTrade) {
-  const result = await paperTradingService.placePaperTrade(userId, orderData);
+      if (isPaperTrade) {
+        // ── Paper trade ───────────────────────────────────────────────────────
+        const result = await paperTradingService.placePaperTrade(userId, orderData);
+        const trade  = result.trade;
 
-  const trade = result.trade;
+        // Mirror in the shared orders collection so order history works
+        const order = await Order.create({
+          userId,
+          symbol:       trade.symbol,
+          exchange:     orderData.exchange || 'paper',
+          side:         trade.side,
+          type:         trade.type || 'market',
+          amount:       trade.amount,
+          price:        trade.price,
+          status:       'filled',
+          filledAmount: trade.amount,
+          averageFilledPrice: trade.price,
+          mode:         'paper',
+          metadata:     { paperTradeId: trade._id?.toString() },
+        });
 
-  // ✅ SAVE ALSO IN ORDERS COLLECTION
-const order = await Order.create({
-  userId,
-  symbol: trade.symbol,
-  exchange: orderData.exchange || 'paper', // ✅ FIX
-  side: trade.side,
-  type: trade.type || 'market',
-  price: trade.price,
-  amount: trade.quantity,
-  total: trade.totalValue,
-  status: trade.status || 'filled',
-  filledAmount: trade.quantity,
-  createdAt: trade.timestamp
-});
-  return result;
-}
+        // Notify via WebSocket
+        if (global.tradingHandler) {
+          global.tradingHandler.broadcastOrderUpdate(userId, order);
+        }
+        if (global.portfolioHandler) {
+          global.portfolioHandler.broadcastPortfolioUpdate(userId);
+        }
 
-      // Live trading (original code)
-      // Basic validation
-      if (!orderData || !orderData.symbol || !orderData.type || !orderData.side || !orderData.amount) {
-        throw new Error('Missing required order fields');
+        return { order, paperResult: result };
       }
 
-      orderData.exchange = orderData.exchange || this.getDefaultExchange();
-      orderData.symbol = await this.normalizeSymbolForExchange(orderData.symbol, orderData.exchange);
+      // ── Real trade ─────────────────────────────────────────────────────────
+      const { symbol, exchange: exchangeId = 'binance', side, type, amount, price,
+              timeInForce = 'GTC' } = orderData;
 
-      // Validate user's portfolio and balance
-      await this.validateUserBalance(userId, orderData);
+      // First try to load user's own API keys, fall back to server keys if not available
+      let exchangeClient = await this.loadUserApiKeys(userId, exchangeId);
+      if (!exchangeClient) {
+        exchangeClient = this.getExchange(exchangeId, true);
+      }
+      if (!exchangeClient) {
+        throw new Error(`No authenticated client for exchange "${exchangeId}". Add API keys in Settings.`);
+      }
 
-      // Generate client order ID
-      const clientOrderId = uuidv4();
+      const tradingPair = await this.normalizeSymbolForExchange(symbol, exchangeId);
 
-      // Create order in database
-      const order = new Order({
+      let exchangeOrder;
+      if (type === 'market') {
+        exchangeOrder = await exchangeClient.createMarketOrder(tradingPair, side, amount);
+      } else if (type === 'limit') {
+        if (!price) throw new Error('Price is required for limit orders');
+        exchangeOrder = await exchangeClient.createLimitOrder(tradingPair, side, amount, price, { timeInForce });
+      } else {
+        throw new Error(`Order type "${type}" not supported`);
+      }
+
+      const order = await Order.create({
         userId,
-        clientOrderId,
-        ...orderData,
-        // Ensure type and side are always set
-        type: orderData.type || 'market',
-        side: orderData.side || 'buy'
+        symbol,
+        exchange:           exchangeId,
+        side,
+        type,
+        amount,
+        price:              price || null,
+        status:             this.normalizeOrderStatus(exchangeOrder.status),
+        exchangeOrderId:    exchangeOrder.id,
+        filledAmount:       exchangeOrder.filled || 0,
+        averageFilledPrice: exchangeOrder.average || price || 0,
+        mode:               'live',
       });
 
-      // Ensure total is calculated if not provided
-      if (!order.total && order.price && order.amount) {
-        order.total = order.price * order.amount;
-      }
-
-      // Place order on exchange
-      const exchangeOrder = await this.placeExchangeOrder(order);
-
-      // Update order with exchange data
-      order.exchangeOrderId = exchangeOrder?.id || null;
-      order.status = exchangeOrder?.status || order.status || 'open';
-
-      if (exchangeOrder?.filled !== undefined) {
-        order.filledAmount = exchangeOrder.filled;
-      }
-
-      if (exchangeOrder?.remaining !== undefined) {
-        order.remainingAmount = exchangeOrder.remaining;
-      }
-
-      if (exchangeOrder?.trades || exchangeOrder?.fills) {
-        order.fills = exchangeOrder.trades || exchangeOrder.fills;
-      }
-
-      if (order.fills && typeof order.calculateAverageFilledPrice === 'function') {
-        order.averageFilledPrice = order.calculateAverageFilledPrice();
-      } else if (exchangeOrder?.average) {
-        order.averageFilledPrice = exchangeOrder.average;
-      }
-
-      await order.save();
-
-      // Schedule order sync for live orders
-      if (order.exchange !== 'paper' && order.status === 'open') {
-        scheduleOrderSync(order._id.toString()).catch(err =>
-          logger.warn('[placeOrder] Failed to schedule order sync:', err.message)
-        );
-      }
-
-      // Update portfolio if order is filled
-      if (['filled', 'partially_filled', 'partially-filled', 'closed'].includes(order.status)) {
+      if (['filled', 'closed'].includes(order.status)) {
         await this.updatePortfolio(userId, order);
+      } else {
+        await scheduleOrderSync(order._id, exchangeId);
       }
 
-      return order;
+      if (global.tradingHandler) global.tradingHandler.broadcastOrderUpdate(userId, order);
+      if (global.portfolioHandler) global.portfolioHandler.broadcastPortfolioUpdate(userId);
+
+      return { order };
     } catch (error) {
       logger.error('Error placing order:', error);
       throw error;
     }
+  }
+
+  normalizeOrderStatus(status) {
+    const map = { open: 'open', closed: 'filled', canceled: 'cancelled', cancelled: 'cancelled',
+                  partially_filled: 'partially_filled', expired: 'cancelled' };
+    return map[status?.toLowerCase()] || 'open';
   }
 
   async getOpenOrders(userId, symbol = null) {
