@@ -1,7 +1,2 @@
-// run `node index.js` in the terminal
-
-console.log(`Hello Node.js v${process.versions.node}!`);
-
-
-  
-
+// This is the npm start entry — just delegate to the real app
+require('./src/app.js');
