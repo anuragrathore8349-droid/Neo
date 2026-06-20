@@ -118,8 +118,36 @@ const scheduleMarketDataUpdates = async (symbol) => {
 };
 
 // ── Auto-start price broadcast on server boot ─────────────────────────────────
-const startPriceBroadcast = async () => {
-  try {
+const BROADCAST_INTERVAL_MS = 15_000; // 15 seconds
+
+async function startPriceBroadcastPolling() {
+  logger.info('📡 Starting price broadcast via polling fallback (no Redis queue)');
+  setInterval(async () => {
+    try {
+      const prices = await krakenService.getLivePrices(TOP_SYMBOLS);
+      const marketNsp = global.wsServer?.io?.of('/market');
+      if (!marketNsp) return;
+      for (const [symbol, data] of Object.entries(prices)) {
+        if (!data || data.price === null) continue;
+        marketNsp.to(`price:${symbol}`).emit('priceUpdate', {
+          symbol,
+          price:     data.price,
+          change24h: data.change24h ?? 0,
+          volume24h: data.volume24h ?? 0,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (err) {
+      logger.error('Price broadcast polling error:', err.message);
+    }
+  }, BROADCAST_INTERVAL_MS);
+}
+
+async function startPriceBroadcast() {
+  const { redisClient } = require('../config/database');
+
+  if (redisClient && redisClient.isOpen) {
+    // Use Bull queue (preferred)
     const existing = await marketDataQueue.getRepeatableJobs();
     for (const job of existing) {
       if (job.name === 'priceUpdate') await marketDataQueue.removeRepeatableByKey(job.key);
@@ -127,13 +155,14 @@ const startPriceBroadcast = async () => {
     await marketDataQueue.add(
       'priceUpdate',
       { symbols: TOP_SYMBOLS },
-      { repeat: { every: 30_000 }, jobId: 'price-broadcast-top', removeOnComplete: 5, removeOnFail: 3 },
+      { repeat: { every: BROADCAST_INTERVAL_MS }, jobId: 'price-broadcast-top', removeOnComplete: 5, removeOnFail: 3 },
     );
-    logger.info(`Price broadcast scheduled for: ${TOP_SYMBOLS.join(', ')}`);
-  } catch (err) {
-    logger.error('Failed to start price broadcast:', err.message);
+    logger.info(`✅ Price broadcast started via Bull queue`);
+  } else {
+    // Fall back to polling
+    await startPriceBroadcastPolling();
   }
-};
+}
 
 // ── Portfolio Update Trigger ──────────────────────────────────────────────────
 // ✅ NEW: When prices change, recalculate all user portfolios and broadcast updates
