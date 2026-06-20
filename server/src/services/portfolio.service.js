@@ -12,7 +12,15 @@ class PortfolioService {
   // EXISTING CODE (UNCHANGED)
   // =========================
   async ensureUserPortfolio(userId) {
-    const seededAssets = process.env.DEMO_MODE === 'true' ? [/* same as before */] : [];
+    const seededAssets = process.env.DEMO_MODE === 'true'
+      ? [
+          { symbol: 'BTC',  name: 'Bitcoin',  type: 'crypto', amount: 0.25,  costBasis: 42000 },
+          { symbol: 'ETH',  name: 'Ethereum', type: 'crypto', amount: 1.5,   costBasis: 2800  },
+          { symbol: 'SOL',  name: 'Solana',   type: 'crypto', amount: 10,    costBasis: 120   },
+          { symbol: 'AAPL', name: 'Apple',    type: 'stock',  amount: 5,     costBasis: 178   },
+          { symbol: 'MSFT', name: 'Microsoft',type: 'stock',  amount: 3,     costBasis: 380   },
+        ]
+      : [];
 
     const defaultPortfolio = {
       userId,
@@ -694,6 +702,307 @@ return portfolio;
     logger.error('Error getting asset price history:', error);
     throw error;
   }
+}
+
+/**
+ * Rebalance portfolio using AI optimization
+ */
+async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = false) {
+  try {
+    const portfolio = await Portfolio.findOne({ _id: portfolioId, userId });
+    if (!portfolio) {
+      throw new Error('Portfolio not found');
+    }
+
+    if (!portfolio.assets || portfolio.assets.length < 2) {
+      throw new Error('Portfolio must have at least 2 assets to rebalance');
+    }
+
+    // Get AI service
+    const aiService = require('./ai.service');
+
+    // Prepare assets for optimization
+    const assetsForOptimization = portfolio.assets.map(asset => ({
+      symbol: asset.symbol,
+      name: asset.name,
+      type: asset.type,
+      currentAmount: asset.amount,
+      currentPrice: asset.currentPrice || 0,
+      value: asset.value || 0
+    }));
+
+    // Calculate constraints based on portfolio type
+    const constraints = {
+      minAllocation: 0.05,      // Minimum 5% per asset
+      maxAllocation: 0.50,      // Maximum 50% per asset
+      riskTolerance: 'moderate' // Can be adjusted based on user profile
+    };
+
+    // Call AI optimization
+    const optimization = await aiService.optimizePortfolio(
+      assetsForOptimization,
+      constraints,
+      objective
+    );
+
+    if (dryRun) {
+      // Return recommendation without applying changes
+      return {
+        status: 'preview',
+        currentAllocation: optimization.currentAllocation,
+        recommendedAllocation: optimization.recommendedAllocation,
+        expectedMetrics: optimization.expectedMetrics,
+        rebalancing: optimization.rebalancing,
+        objective: optimization.objective,
+        trades: this.calculateTrades(portfolio.assets, optimization.recommendedAllocation),
+        applied: false
+      };
+    }
+
+    // Apply rebalancing: Update asset allocations
+    const totalValue = portfolio.totalValue || 0;
+    const updatedAssets = portfolio.assets.map(asset => {
+      const recommendedAlloc = optimization.recommendedAllocation[asset.symbol] || 0;
+      const newAmount = (totalValue * recommendedAlloc) / (asset.currentPrice || 1);
+      
+      return {
+        ...asset,
+        amount: newAmount,
+        allocatedAt: new Date()
+      };
+    });
+
+    // Save rebalanced portfolio
+    portfolio.assets = updatedAssets;
+    portfolio.lastRebalancedAt = new Date();
+    portfolio.rebalanceHistory = portfolio.rebalanceHistory || [];
+    portfolio.rebalanceHistory.push({
+      date: new Date(),
+      objective,
+      previousAllocation: optimization.currentAllocation,
+      newAllocation: optimization.recommendedAllocation,
+      expectedMetrics: optimization.expectedMetrics,
+      reason: `Rebalanced to optimize for ${objective} ratio`
+    });
+
+    await portfolio.save();
+
+    // Recalculate metrics
+    await this.updatePortfolioMetrics(portfolio);
+
+    // Broadcast portfolio update via WebSocket
+    if (global.portfolioHandler) {
+      global.portfolioHandler.broadcastPortfolioUpdate(userId);
+    }
+
+    // Create notification
+    const notificationService = require('./notification.service');
+    await notificationService.createNotification(userId, {
+      type: 'performance',
+      title: 'Portfolio Rebalanced',
+      message: `Your portfolio has been rebalanced to optimize for ${objective}. New allocation applied.`,
+      icon: 'TrendingUp',
+      severity: 'success',
+      actionUrl: '/portfolio',
+      actionLabel: 'View Portfolio',
+      metadata: {
+        portfolioId: portfolioId.toString(),
+        objective,
+        expectedSharpe: optimization.expectedMetrics?.sharpe,
+        expectedVolatility: optimization.expectedMetrics?.volatility
+      }
+    });
+
+    return {
+      status: 'success',
+      message: 'Portfolio rebalanced successfully',
+      currentAllocation: optimization.currentAllocation,
+      recommendedAllocation: optimization.recommendedAllocation,
+      expectedMetrics: optimization.expectedMetrics,
+      rebalancing: optimization.rebalancing,
+      objective: optimization.objective,
+      trades: this.calculateTrades(portfolio.assets, optimization.recommendedAllocation),
+      applied: true,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    logger.error('Error rebalancing portfolio:', error);
+    throw error;
+  }
+}
+
+/**
+ * Calculate required trades for rebalancing
+ */
+calculateTrades(assets, recommendedAllocation) {
+  const totalValue = assets.reduce((sum, a) => sum + (a.value || 0), 0);
+  
+  return assets.map(asset => {
+    const currentValue = asset.value || 0;
+    const currentAllocation = totalValue > 0 ? (currentValue / totalValue) * 100 : 0;
+    const recommendedAlloc = (recommendedAllocation[asset.symbol] || 0) * 100;
+    const difference = recommendedAlloc - currentAllocation;
+    const tradeValue = (difference / 100) * totalValue;
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      currentAmount: asset.amount,
+      currentValue: currentValue,
+      currentAllocation: currentAllocation.toFixed(2),
+      recommendedAllocation: recommendedAlloc.toFixed(2),
+      differencePercent: difference.toFixed(2),
+      tradeValue: tradeValue.toFixed(2),
+      action: tradeValue > 0 ? 'BUY' : tradeValue < 0 ? 'SELL' : 'HOLD'
+    };
+  });
+}
+
+async importAssetsFromCSV(userId, csvBuffer) {
+  const csv = require('csv-parser');
+  const { Readable } = require('stream');
+  const marketService = require('./market.service');
+
+  return new Promise((resolve, reject) => {
+    const rows = [];
+    
+    Readable.from([csvBuffer])
+      .pipe(csv())
+      .on('data', (row) => {
+        // Normalize headers to lowercase
+        const normalizedRow = {};
+        for (const [key, value] of Object.entries(row)) {
+          normalizedRow[key.toLowerCase().trim()] = value;
+        }
+        rows.push(normalizedRow);
+      })
+      .on('end', async () => {
+        try {
+          const portfolio = await this.ensureUserPortfolio(userId);
+          const importedAssets = [];
+          const errors = [];
+
+          // Process each row
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNum = i + 2; // CSV line number (1-indexed + header)
+
+            try {
+              // Validate required fields
+              const symbol = row.symbol?.toString().toUpperCase().trim();
+              const amount = parseFloat(row.amount || row.quantity);
+              const purchasePrice = parseFloat(row['purchase price'] || row['price'] || row['cost']);
+              const purchaseDate = row['purchase date'] || row['date'];
+
+              if (!symbol) {
+                errors.push(`Row ${rowNum}: Missing or empty symbol field`);
+                continue;
+              }
+              if (isNaN(amount) || amount <= 0) {
+                errors.push(`Row ${rowNum}: Invalid amount (${row.amount})`);
+                continue;
+              }
+              if (isNaN(purchasePrice) || purchasePrice <= 0) {
+                errors.push(`Row ${rowNum}: Invalid purchase price (${row['purchase price']})`);
+                continue;
+              }
+
+              // Determine asset type (default to crypto if not specified)
+              let assetType = row.type?.toLowerCase() || 'crypto';
+              if (!['crypto', 'stock', 'forex', 'commodity', 'fiat'].includes(assetType)) {
+                assetType = 'crypto';
+              }
+
+              // Fetch current price from market service
+              let currentPrice = purchasePrice; // fallback
+              try {
+                let priceData;
+                if (assetType === 'crypto') {
+                  const prices = await marketService.getCryptoPrices([symbol]);
+                  priceData = prices[symbol];
+                } else if (assetType === 'stock') {
+                  const prices = await marketService.getStockPrices([symbol]);
+                  priceData = prices[symbol];
+                } else if (assetType === 'forex') {
+                  const prices = await marketService.getForexPrices([symbol]);
+                  priceData = prices[symbol];
+                }
+
+                if (priceData?.price) {
+                  currentPrice = priceData.price;
+                }
+              } catch (priceErr) {
+                logger.warn(`Could not fetch current price for ${symbol}:`, priceErr.message);
+                // Use purchase price as fallback
+              }
+
+              // Calculate cost basis
+              const costBasis = purchasePrice * amount;
+
+              // Parse purchase date
+              let acquiredDate = new Date();
+              if (purchaseDate) {
+                const parsedDate = new Date(purchaseDate);
+                if (!isNaN(parsedDate.getTime())) {
+                  acquiredDate = parsedDate;
+                }
+              }
+
+              // Create asset object
+              const newAsset = {
+                assetId: `${symbol}_${Date.now()}_${i}`,
+                symbol,
+                name: row.name || symbol,
+                type: assetType,
+                amount,
+                costBasis,
+                currentPrice,
+                purchaseDate: acquiredDate,
+                value: amount * currentPrice,
+                profit: (amount * currentPrice) - costBasis,
+                profitPercentage: costBasis > 0 ? ((amount * currentPrice - costBasis) / costBasis * 100) : 0,
+                notes: row.notes || `Imported from CSV on ${new Date().toLocaleDateString()}`,
+                acquisition: purchaseDate ? `CSV import (purchased ${purchaseDate})` : 'CSV import'
+              };
+
+              portfolio.assets.push(newAsset);
+              importedAssets.push({
+                symbol,
+                amount,
+                purchasePrice,
+                currentPrice,
+                costBasis,
+                value: newAsset.value
+              });
+
+            } catch (rowErr) {
+              errors.push(`Row ${rowNum}: ${rowErr.message}`);
+            }
+          }
+
+          if (importedAssets.length === 0) {
+            throw new Error(`No valid assets found in CSV. Errors: ${errors.join('; ')}`);
+          }
+
+          // Save portfolio with imported assets
+          await portfolio.save();
+          await this.updatePortfolioMetrics(portfolio);
+          await this.saveHistoricalSnapshot(portfolio);
+
+          resolve({
+            importedCount: importedAssets.length,
+            assets: importedAssets,
+            errors: errors.length > 0 ? errors : undefined,
+            message: errors.length > 0 
+              ? `Imported ${importedAssets.length} assets with ${errors.length} error(s)`
+              : `Successfully imported ${importedAssets.length} assets`
+          });
+        } catch (err) {
+          reject(err);
+        }
+      })
+      .on('error', reject);
+  });
 }
 }
 
