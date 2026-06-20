@@ -224,56 +224,145 @@ class AnalyticsService {
     }
   }
 
-  async getCorrelationMatrix(userId, assets = [], timeframe = '1m') {
+  async getCorrelationMatrix(userId) {
     try {
-      const days = this._timeframeToDays(timeframe);
-      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-      const to   = new Date().toISOString();
+      const portfolio = await Portfolio.findOne({ userId });
+      if (!portfolio || !portfolio.assets.length) return { matrix: [], symbols: [] };
 
-      // Fetch price histories for each asset in parallel
-      const histories = await Promise.all(
-        assets.map(async symbol => {
-          try {
-            const h = await marketService.getPriceHistory(symbol, '1d', from, to);
-            return { symbol, prices: (h?.prices || []).map(p => p.close).filter(Boolean) };
-          } catch { return { symbol, prices: [] }; }
-        })
-      );
+      const symbols = [...new Set(portfolio.assets.map(a => a.symbol))].slice(0, 10);
+      const now = new Date();
+      const from = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+      // Fetch 90-day daily history for each symbol
+      const historyMap = {};
+      await Promise.all(symbols.map(async (sym) => {
+        try {
+          const h = await marketService.getPriceHistory(sym, '1d', from.toISOString(), now.toISOString());
+          historyMap[sym] = (h?.prices || []).map(p => p.close);
+        } catch { historyMap[sym] = []; }
+      }));
 
       // Compute pairwise Pearson correlation
-      const matrix = {};
-      for (const a of histories) {
-        matrix[a.symbol] = {};
-        for (const b of histories) {
-          matrix[a.symbol][b.symbol] = a.symbol === b.symbol
-            ? 1
-            : this._pearsonCorrelation(a.prices, b.prices);
-        }
-      }
+      const pearson = (a, b) => {
+        const n = Math.min(a.length, b.length);
+        if (n < 2) return null;
+        const ax = a.slice(0, n), bx = b.slice(0, n);
+        const ma = ax.reduce((s,v)=>s+v,0)/n, mb = bx.reduce((s,v)=>s+v,0)/n;
+        const num = ax.reduce((s,v,i) => s + (v-ma)*(bx[i]-mb), 0);
+        const da  = Math.sqrt(ax.reduce((s,v)=>s+(v-ma)**2,0));
+        const db  = Math.sqrt(bx.reduce((s,v)=>s+(v-mb)**2,0));
+        return da && db ? parseFloat((num/(da*db)).toFixed(4)) : null;
+      };
 
-      return { assets, timeframe, matrix, lastUpdated: new Date() };
+      const matrix = symbols.map(s1 =>
+        symbols.map(s2 => s1 === s2 ? 1 : pearson(historyMap[s1], historyMap[s2]))
+      );
+
+      return { symbols, matrix };
     } catch (error) {
-      logger.error('Error computing correlation matrix:', error);
+      this._log?.error?.('Correlation matrix error:', error);
       throw error;
     }
   }
 
-  _pearsonCorrelation(x, y) {
-    const n = Math.min(x.length, y.length);
-    if (n < 2) return null;
-    const xs = x.slice(-n), ys = y.slice(-n);
-    const mx = xs.reduce((s, v) => s + v, 0) / n;
-    const my = ys.reduce((s, v) => s + v, 0) / n;
-    const num = xs.reduce((s, v, i) => s + (v - mx) * (ys[i] - my), 0);
-    const den = Math.sqrt(
-      xs.reduce((s, v) => s + Math.pow(v - mx, 2), 0) *
-      ys.reduce((s, v) => s + Math.pow(v - my, 2), 0)
-    );
-    return den === 0 ? 0 : parseFloat((num / den).toFixed(4));
+  async getBenchmarkComparison(userId, timeframe = '1m', benchmark = 'BTC') {
+    try {
+      const portfolio = await Portfolio.findOne({ userId });
+      if (!portfolio) return null;
+
+      const days = this._timeframeToDays(timeframe);
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      const [snapshots, benchmarkHistory] = await Promise.all([
+        PortfolioHistory.find({
+          portfolioId: portfolio._id,
+          timestamp: { $gte: from }
+        }).sort({ timestamp: 1 }).lean(),
+        marketService.getPriceHistory(benchmark, '1d', from.toISOString(), new Date().toISOString()),
+      ]);
+
+      const portfolioReturns = snapshots.map((s, i) => {
+        const prev = snapshots[i - 1];
+        const ret  = prev && prev.totalValue > 0
+          ? ((s.totalValue - prev.totalValue) / prev.totalValue) * 100 : 0;
+        return { date: s.timestamp, value: s.totalValue, return: ret };
+      });
+
+      const benchmarkPrices = (benchmarkHistory?.prices || []);
+      const benchmarkReturns = benchmarkPrices.map((p, i) => {
+        const prev = benchmarkPrices[i - 1];
+        const ret  = prev ? ((p.close - prev.close) / prev.close) * 100 : 0;
+        return { date: p.timestamp, value: p.close, return: ret };
+      });
+
+      return { portfolio: portfolioReturns, benchmark: benchmarkReturns, benchmarkSymbol: benchmark };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async getTaxReport(userId, year) {
+    try {
+      const Transaction = require('../models/transaction.model');
+      const startOfYear = new Date(`${year}-01-01T00:00:00Z`);
+      const endOfYear   = new Date(`${year}-12-31T23:59:59Z`);
+
+      const transactions = await Transaction.find({
+        userId,
+        type: { $in: ['sell', 'trade'] },
+        createdAt: { $gte: startOfYear, $lte: endOfYear }
+      }).lean();
+
+      let totalGains = 0, totalLosses = 0;
+      const events = transactions.map(tx => {
+        const gain = (tx.price - tx.costBasis) * tx.amount;
+        if (gain > 0) totalGains += gain;
+        else totalLosses += Math.abs(gain);
+        return {
+          symbol: tx.symbol,
+          type:   tx.type,
+          date:   tx.createdAt,
+          amount: tx.amount,
+          costBasis: tx.costBasis,
+          salePrice: tx.price,
+          gainLoss:  parseFloat(gain.toFixed(2)),
+        };
+      });
+
+      return {
+        year,
+        totalGains:   parseFloat(totalGains.toFixed(2)),
+        totalLosses:  parseFloat(totalLosses.toFixed(2)),
+        netGainLoss:  parseFloat((totalGains - totalLosses).toFixed(2)),
+        events,
+        disclaimer: 'This report is for informational purposes. Consult a tax professional.',
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async getAssetAllocation(userId) {
+    try {
+      const portfolio = await Portfolio.findOne({ userId });
+      if (!portfolio) return null;
+
+      return {
+        total: portfolio.totalValue || 0,
+        assets: portfolio.assets.map(asset => ({
+          symbol: asset.symbol,
+          name: asset.name,
+          value: asset.value || 0,
+          allocation: asset.allocation || 0
+        }))
+      };
+    } catch (error) {
+      throw error;
+    }
   }
 
   _timeframeToDays(tf) {
-    const map = { '1d': 1, '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+    const map = { '1d':1,'1w':7,'1m':30,'3m':90,'6m':180,'1y':365,'all':730 };
     return map[tf] || 30;
   }
 }
