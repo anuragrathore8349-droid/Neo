@@ -168,6 +168,25 @@ class PaymentService {
     return { received: true };
   }
 
+  /**
+   * Create a Stripe Billing Portal session
+   */
+  async createPortalSession(userId, returnUrl) {
+    if (!stripe) throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY.');
+
+    const subscription = await Subscription.findOne({ userId });
+    if (!subscription?.stripeCustomerId) {
+      throw new Error('No Stripe customer found for this user.');
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: subscription.stripeCustomerId,
+      return_url: returnUrl || `${process.env.APP_URL}/billing`,
+    });
+
+    return { url: session.url };
+  }
+
   // ── Private webhook handlers ──────────────────────────────────────────────
 
   async _handleCheckoutComplete(session) {
