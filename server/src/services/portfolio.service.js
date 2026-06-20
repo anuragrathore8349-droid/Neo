@@ -1031,6 +1031,89 @@ async addMultipleAssets(userId, assets) {
   await this.updatePortfolioMetrics(portfolio);
   return portfolio;
 }
+
+  // ── NEW ASSET CRUD METHODS ─────────────────────────────────────────────────
+
+  async addAsset(userId, assetData) {
+    const portfolio = await this.ensureUserPortfolio(userId);
+    const { symbol, name, type, amount, costBasis, purchaseDate } = assetData;
+
+    const upper = symbol.toUpperCase();
+    const existing = portfolio.assets.find(a => a.symbol === upper);
+    if (existing) {
+      // Average down / up
+      const totalCost = existing.costBasis * existing.amount + costBasis * amount;
+      existing.amount   += amount;
+      existing.costBasis = totalCost / existing.amount;
+      if (purchaseDate && new Date(purchaseDate) < new Date(existing.purchaseDate || 0)) {
+        existing.purchaseDate = purchaseDate;
+      }
+    } else {
+      portfolio.assets.push({ symbol: upper, name, type, amount, costBasis, purchaseDate });
+    }
+
+    await this.updatePortfolioMetrics(portfolio);
+    await portfolio.save();
+    return portfolio;
+  }
+
+  async updateAsset(userId, assetId, updates) {
+    const portfolio = await this.ensureUserPortfolio(userId);
+    const asset = portfolio.assets.id(assetId);
+    if (!asset) throw new Error('Asset not found');
+    Object.assign(asset, updates);
+    await this.updatePortfolioMetrics(portfolio);
+    await portfolio.save();
+    return portfolio;
+  }
+
+  async deleteAsset(userId, assetId) {
+    const portfolio = await this.ensureUserPortfolio(userId);
+    portfolio.assets.pull(assetId);
+    await this.updatePortfolioMetrics(portfolio);
+    await portfolio.save();
+  }
+
+  async getTransactions(userId, { page = 1, limit = 20 } = {}) {
+    const Transaction = require('../models/transaction.model');
+    const skip = (page - 1) * limit;
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ userId }).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Transaction.countDocuments({ userId }),
+    ]);
+    return { transactions, total, page, limit, pages: Math.ceil(total / limit) };
+  }
+
+  async importTransactionsCSV(userId, csvText) {
+    const lines = csvText.split('\n').filter(Boolean);
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const rows = lines.slice(1);
+    const imported = [];
+    const errors   = [];
+
+    for (const row of rows) {
+      try {
+        const vals = row.split(',').map(v => v.trim());
+        const obj  = Object.fromEntries(headers.map((h, i) => [h, vals[i]]));
+        // Expected CSV columns: symbol, type (buy/sell), amount, price, date
+        if (!obj.symbol || !obj.type || !obj.amount || !obj.price) continue;
+        const amount   = parseFloat(obj.amount);
+        const price    = parseFloat(obj.price);
+        await this.addAsset(userId, {
+          symbol:       obj.symbol,
+          name:         obj.name || obj.symbol,
+          type:         obj.assettype || 'crypto',
+          amount:       obj.type.toLowerCase() === 'sell' ? -amount : amount,
+          costBasis:    price,
+          purchaseDate: obj.date ? new Date(obj.date) : new Date(),
+        });
+        imported.push(obj.symbol);
+      } catch (err) {
+        errors.push({ row, error: err.message });
+      }
+    }
+    return { imported: imported.length, errors };
+  }
 }
 
 module.exports = new PortfolioService();
