@@ -26,19 +26,20 @@ interface PaperTradePayload {
 
 // ── Market data ──────────────────────────────────────────────────────────────
 
-export async function getOrderBook(symbol: string, limit = 50) {
-  const raw = await apiFetch(
-    `/api/trading/orderbook?symbol=${encodeURIComponent(symbol)}&limit=${limit}`
-  );
-  // Controller wraps result as { status, data: { asks, bids } }
-  // Always normalise so callers get { data: { asks, bids } }
-  return { data: (raw as any)?.data ?? raw };
+export async function getOrderBook(symbol: string, limit = 20) {
+  const response = await apiFetch(`/api/trading/orderbook?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
+  return {
+    status: response.status || 'success',
+    data: response.data || { asks: [], bids: [] },
+  };
 }
 
 export async function getRecentTrades(symbol: string, limit = 50) {
-  return apiFetch(
-    `/api/trading/trades?symbol=${encodeURIComponent(symbol)}&limit=${limit}`
-  );
+  const response = await apiFetch(`/api/trading/trades?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
+  return {
+    status: response.status || 'success',
+    data: response.data || [],
+  };
 }
 
 // ── Real trading ─────────────────────────────────────────────────────────────
