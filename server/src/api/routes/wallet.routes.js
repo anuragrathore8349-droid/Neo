@@ -26,4 +26,7 @@ router.post('/cache-transactions',
 // ✅ Live gas prices endpoint
 router.get('/gas-prices', walletController.getGasPrices);
 
+// ✅ Get transaction status endpoint
+router.get('/transactions/status', walletController.getTransactionStatus);
+
 module.exports = router;
