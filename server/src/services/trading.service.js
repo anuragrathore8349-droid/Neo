@@ -655,6 +655,17 @@ class TradingService {
       }
 
       await portfolio.save();
+
+      // ── NEW: broadcast portfolio update via WebSocket ──────────────────────
+      if (global.portfolioHandler) {
+        try {
+          const portfolioService = require('./portfolio.service');
+          const summary = await portfolioService.getPortfolioSummary(userId);
+          global.portfolioHandler.broadcastPortfolioUpdate(userId.toString(), summary);
+        } catch (wsErr) {
+          logger.warn('Portfolio WS broadcast failed (non-critical):', wsErr.message);
+        }
+      }
     } catch (error) {
       logger.error('Error updating portfolio:', error);
       throw error;
