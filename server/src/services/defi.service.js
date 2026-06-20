@@ -1,5 +1,4 @@
-// FILE: src/services/defi.service.js
-// REPLACE ENTIRE FILE
+
 
 'use strict';
 
@@ -167,7 +166,8 @@ class DefiService {
         risk: 'Low', chain: 'Ethereum',
         description: 'Aave is an open-source, non-custodial liquidity protocol. Earn interest on deposits and borrow assets with over-collateralized loans.',
         features: ['Lending & Borrowing', 'Flash Loans', 'Governance', 'Risk Management'],
-        safetyScore: '95/100'
+        safetyScore: '95/100',
+        isLive: true
       };
     } catch (err) {
       logger.warn('fetchAaveProtocol failed:', err.message);
@@ -192,7 +192,8 @@ class DefiService {
         risk: 'High', chain: 'Ethereum',
         description: 'Uniswap is the leading decentralized exchange with concentrated liquidity positions and flexible fee tiers.',
         features: ['Automated Market Maker', 'Concentrated Liquidity', 'Flash Swaps', 'Multiple Fee Tiers'],
-        safetyScore: '94/100'
+        safetyScore: '94/100',
+        isLive: true
       };
     } catch (err) {
       logger.warn('fetchUniswapProtocol failed:', err.message);
@@ -215,7 +216,8 @@ class DefiService {
         risk: 'Medium', chain: 'Ethereum',
         description: 'Curve is a decentralized exchange optimized for stablecoin and pegged asset swaps with low slippage and fees.',
         features: ['Stablecoin Swaps', 'Low Slippage', 'CRV Rewards', 'Gauge Voting'],
-        safetyScore: '91/100'
+        safetyScore: '91/100',
+        isLive: true
       };
     } catch (err) {
       logger.warn('fetchCurveProtocol failed:', err.message);
@@ -237,7 +239,8 @@ class DefiService {
         risk: 'Low', chain: 'Ethereum',
         description: 'Lido is the leading liquid staking protocol. Stake ETH and receive stETH that auto-compounds staking rewards.',
         features: ['Liquid Staking', 'No Lock Period', 'stETH Rewards', 'DeFi Compatible'],
-        safetyScore: '93/100'
+        safetyScore: '93/100',
+        isLive: true
       };
     } catch (err) {
       logger.warn('fetchLidoProtocol failed:', err.message);
@@ -247,10 +250,10 @@ class DefiService {
 
   getBasicProtocols () {
     return [
-      { id: 'aave',    name: 'Aave V3',         type: 'lending', networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/aave-aave-logo.png',               tvl: '$10.5B', apy: '4.25%', risk: 'Low',    chain: 'Ethereum', description: 'Aave is an open-source, non-custodial liquidity protocol.',                                          features: ['Lending & Borrowing', 'Flash Loans', 'Governance'], safetyScore: '95/100' },
-      { id: 'uniswap', name: 'Uniswap V3',       type: 'dex',     networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/uniswap-uni-logo.png',             tvl: '$4.8B',  apy: '18.5%', risk: 'High',   chain: 'Ethereum', description: 'Uniswap is the leading decentralized exchange with concentrated liquidity.', features: ['AMM', 'Concentrated Liquidity', 'Flash Swaps'],      safetyScore: '94/100' },
-      { id: 'curve',   name: 'Curve Finance',    type: 'dex',     networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/curve-dao-token-crv-logo.png',     tvl: '$3.8B',  apy: '8.72%', risk: 'Medium', chain: 'Ethereum', description: 'Curve is optimized for stablecoin swaps with low slippage.',                    features: ['Stablecoin Swaps', 'Low Slippage', 'CRV Rewards'],  safetyScore: '91/100' },
-      { id: 'lido',    name: 'Lido',             type: 'staking', networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/lido-dao-ldo-logo.png',            tvl: '$12.5B', apy: '3.82%', risk: 'Low',    chain: 'Ethereum', description: 'Lido is the leading liquid staking protocol for ETH.',                        features: ['Liquid Staking', 'No Lock Period', 'stETH'],         safetyScore: '93/100' }
+      { id: 'aave',    name: 'Aave V3',         type: 'lending', networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/aave-aave-logo.png',               tvl: '$10.5B', apy: '4.25%', risk: 'Low',    chain: 'Ethereum', description: 'Aave is an open-source, non-custodial liquidity protocol.',                                          features: ['Lending & Borrowing', 'Flash Loans', 'Governance'], safetyScore: '95/100', isLive: false },
+      { id: 'uniswap', name: 'Uniswap V3',       type: 'dex',     networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/uniswap-uni-logo.png',             tvl: '$4.8B',  apy: '18.5%', risk: 'High',   chain: 'Ethereum', description: 'Uniswap is the leading decentralized exchange with concentrated liquidity.', features: ['AMM', 'Concentrated Liquidity', 'Flash Swaps'],      safetyScore: '94/100', isLive: false },
+      { id: 'curve',   name: 'Curve Finance',    type: 'dex',     networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/curve-dao-token-crv-logo.png',     tvl: '$3.8B',  apy: '8.72%', risk: 'Medium', chain: 'Ethereum', description: 'Curve is optimized for stablecoin swaps with low slippage.',                    features: ['Stablecoin Swaps', 'Low Slippage', 'CRV Rewards'],  safetyScore: '91/100', isLive: false },
+      { id: 'lido',    name: 'Lido',             type: 'staking', networks: ['ethereum'], icon: 'https://cryptologos.cc/logos/lido-dao-ldo-logo.png',            tvl: '$12.5B', apy: '3.82%', risk: 'Low',    chain: 'Ethereum', description: 'Lido is the leading liquid staking protocol for ETH.',                        features: ['Liquid Staking', 'No Lock Period', 'stETH'],         safetyScore: '93/100', isLive: false }
     ];
   }
 
