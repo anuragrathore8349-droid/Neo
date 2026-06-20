@@ -1,4 +1,5 @@
-
+// FILE: src/services/defi.service.js
+// REPLACE ENTIRE FILE
 
 'use strict';
 
@@ -271,32 +272,89 @@ class DefiService {
   }
 
   // ─── STAKING — build unsigned tx only, NO fake hashes ────────────────────
-  async stakeAssets (userId, stakeData) {
-    // This old path creates fake tx hashes. The real flow is:
-    // Client: POST /api/defi/build-tx → MetaMask signs → POST /api/defi/confirm-tx
-    // This method should never be called in production.
-    throw new Error(
-      'Direct staking is not supported. Use POST /api/defi/build-tx to get an unsigned transaction, ' +
-      'have the user sign it in MetaMask, then POST /api/defi/confirm-tx with the real txHash.'
-    );
-  }
-
-  async unstakeAssets (userId, unstakeData) {
-    const { positionId, amount, walletAddress } = unstakeData;
-    const position = await DefiPosition.findOne({ _id: positionId, userId });
-    if (!position) throw new Error('Position not found');
-    await this.validateUnstaking(position);
-
-    const unstakeAmount = parseFloat(amount || 0);
-    const currentAmount = parseFloat(position.asset?.amount || 0);
-    if (unstakeAmount <= 0 || unstakeAmount > currentAmount) {
-      throw new Error(`Invalid unstake amount. Available: ${currentAmount}`);
+  async stakeAssets(userId, stakeData) {
+    const { protocol, asset, amount, walletAddress } = stakeData;
+    if (!protocol || !asset || !amount || !walletAddress) {
+      throw new Error('protocol, asset, amount, and walletAddress are required');
     }
 
-    const remaining = currentAmount - unstakeAmount;
-    if (remaining === 0) {
-      position.status = 'completed';
-      position.endedAt = new Date();
+    // Record the position intent in DB (actual on-chain tx is initiated from frontend via MetaMask)
+    const position = await DefiPosition.create({
+      userId,
+      protocol,
+      asset,
+      amount: parseFloat(amount),
+      walletAddress,
+      type: 'staking',
+      status: 'pending',
+      stakedAt: new Date(),
+    });
+
+    // Emit event so frontend knows to prompt MetaMask
+    if (global.defiHandler) {
+      global.defiHandler.broadcastPositionUpdate(userId, position);
+    }
+
+    return {
+      positionId: position._id,
+      status: 'pending_onchain',
+      message: `Please confirm the staking transaction in your wallet for ${amount} ${asset} on ${protocol}`,
+    };
+  }
+
+  async unstakeAssets(userId, unstakeData) {
+    const { positionId, amount } = unstakeData;
+    const position = await DefiPosition.findOne({ _id: positionId, userId });
+    if (!position) throw new Error('Staking position not found');
+
+    position.status = 'unstaking';
+    position.unstakedAt = new Date();
+    await position.save();
+
+    if (global.defiHandler) {
+      global.defiHandler.broadcastPositionUpdate(userId, position);
+    }
+
+    return {
+      positionId: position._id,
+      status: 'pending_onchain',
+      message: `Please confirm the unstaking transaction in your wallet`,
+    };
+  }
+
+  async depositToFarm(userId, farmData) {
+    const { farmId, amount, walletAddress } = farmData;
+    if (!farmId || !amount || !walletAddress) {
+      throw new Error('farmId, amount, and walletAddress are required');
+    }
+    // Record intent — actual tx via MetaMask from frontend
+    const position = await DefiPosition.create({
+      userId, type: 'yield_farm', externalId: farmId,
+      amount: parseFloat(amount), walletAddress, status: 'pending', stakedAt: new Date(),
+    });
+    return { positionId: position._id, status: 'pending_onchain',
+      message: 'Confirm the deposit transaction in your wallet' };
+  }
+
+  async withdrawFromFarm(userId, farmData) {
+    const { positionId } = farmData;
+    const position = await DefiPosition.findOne({ _id: positionId, userId });
+    if (!position) throw new Error('Farm position not found');
+    position.status = 'withdrawing';
+    await position.save();
+    return { positionId: position._id, status: 'pending_onchain',
+      message: 'Confirm the withdrawal in your wallet' };
+  }
+
+  async harvestFarmRewards(userId, farmData) {
+    const { positionId } = farmData;
+    const position = await DefiPosition.findOne({ _id: positionId, userId });
+    if (!position) throw new Error('Position not found');
+    position.lastHarvestedAt = new Date();
+    await position.save();
+    return { positionId: position._id, status: 'pending_onchain',
+      message: 'Confirm the harvest transaction in your wallet' };
+  }
     } else {
       position.status = 'partial_exit';
       position.asset.amount = remaining;
