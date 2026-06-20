@@ -128,21 +128,19 @@ const retryWithBackoff = async (fn, maxRetries = 3) => {
  * Get OpenAI insights for detected anomalies
  */
 const getOpenAIInsights = async (anomaly) => {
-  try {
-    // Check if OpenAI key is configured
-    if (!config.openai?.apiKey) {
-      console.warn('⚠️ OpenAI API key not configured. Returning basic explanation.');
-      return getBasicExplanation(anomaly);
-    }
-
-    const prompt = buildAnomalyPrompt(anomaly);
-    const response = await callOpenAI(prompt, 'concise');
-
-    return response;
-  } catch (error) {
-    logger.warn('Failed to get OpenAI insights:', error.message);
+  if (!config.openai?.apiKey) {
+    logger.warn('⚠️ OpenAI API key not configured. Returning basic explanation.');
     return getBasicExplanation(anomaly);
   }
+
+  const prompt = buildAnomalyPrompt(anomaly);
+  const fallback = getBasicExplanation(anomaly);
+  
+  return callOpenAIWithRetry(
+    () => callOpenAI(prompt, 'concise'),
+    fallback,
+    2
+  ) || fallback;
 };
 
 /**
@@ -150,48 +148,50 @@ const getOpenAIInsights = async (anomaly) => {
  * Replaces Natural.js for more accurate market sentiment
  */
 const getSentimentAnalysis = async (symbol, content) => {
-  try {
-    if (!config.openai?.apiKey) {
-      return {
-        sentiment: 'neutral',
-        score: 0.5,
-        confidence: 0.5,
-        reason: 'OpenAI not configured'
-      };
-    }
-
-    const prompt = buildSentimentPrompt(symbol, content);
-    const response = await callOpenAI(prompt, 'json');
-
-    return parseSentimentResponse(response);
-  } catch (error) {
-    logger.warn('Failed to analyze sentiment:', error.message);
+  if (!config.openai?.apiKey) {
     return {
       sentiment: 'neutral',
       score: 0.5,
-      confidence: 0.3,
-      reason: 'Analysis failed'
+      confidence: 0.5,
+      reason: 'OpenAI not configured'
     };
   }
+
+  const prompt = buildSentimentPrompt(symbol, content);
+  const fallback = {
+    sentiment: 'neutral',
+    score: 0.5,
+    confidence: 0.3,
+    reason: 'Analysis unavailable'
+  };
+
+  const response = await callOpenAIWithRetry(
+    () => callOpenAI(prompt, 'json'),
+    fallback,
+    2
+  );
+
+  return response ? parseSentimentResponse(response) : fallback;
 };
 
 /**
  * Generate investment strategy recommendations
  */
 const generateStrategyRecommendation = async (portfolio, marketConditions) => {
-  try {
-    if (!config.openai?.apiKey) {
-      return generateBasicStrategy(portfolio);
-    }
-
-    const prompt = buildStrategyPrompt(portfolio, marketConditions);
-    const response = await callOpenAI(prompt, 'json');
-
-    return parseStrategyResponse(response);
-  } catch (error) {
-    logger.warn('Failed to generate strategy:', error.message);
+  if (!config.openai?.apiKey) {
     return generateBasicStrategy(portfolio);
   }
+
+  const prompt = buildStrategyPrompt(portfolio, marketConditions);
+  const fallback = generateBasicStrategy(portfolio);
+
+  const response = await callOpenAIWithRetry(
+    () => callOpenAI(prompt, 'json'),
+    fallback,
+    2
+  );
+
+  return response ? parseStrategyResponse(response) : fallback;
 };
 
 /**
@@ -325,6 +325,27 @@ const callOpenAI = async (prompt, format = 'text') => {
 
   setCache(cacheKey, result);
   return result;
+};
+
+/**
+ * Wrapper to handle OpenAI calls with graceful fallback on rate limits
+ * Returns fallback response instead of throwing on errors
+ */
+const callOpenAIWithRetry = async (fn, fallback = null, maxRetries = 2) => {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err?.response?.status === 429 && i < maxRetries) {
+        const delayMs = 2000 * (i + 1);
+        logger.warn(`OpenAI rate limit (attempt ${i + 1}), retrying in ${delayMs}ms`);
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      logger.warn(`OpenAI call failed (attempt ${i + 1}):`, err?.message);
+      return fallback;
+    }
+  }
 };
 
 /**
