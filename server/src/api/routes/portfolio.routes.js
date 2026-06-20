@@ -30,9 +30,9 @@ router.post('/',
 );
 
 // CSV Import endpoint
-router.post('/import',
+router.post('/import/csv',
   upload.single('file'),
-  portfolioController.importFromCSV
+  portfolioController.importCSV
 );
 
 // Add asset to portfolio
