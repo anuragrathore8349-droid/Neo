@@ -224,6 +224,54 @@ class AnalyticsService {
     }
   }
 
+  async getCorrelationMatrix(userId, assets = [], timeframe = '1m') {
+    try {
+      const days = this._timeframeToDays(timeframe);
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const to   = new Date().toISOString();
+
+      // Fetch price histories for each asset in parallel
+      const histories = await Promise.all(
+        assets.map(async symbol => {
+          try {
+            const h = await marketService.getPriceHistory(symbol, '1d', from, to);
+            return { symbol, prices: (h?.prices || []).map(p => p.close).filter(Boolean) };
+          } catch { return { symbol, prices: [] }; }
+        })
+      );
+
+      // Compute pairwise Pearson correlation
+      const matrix = {};
+      for (const a of histories) {
+        matrix[a.symbol] = {};
+        for (const b of histories) {
+          matrix[a.symbol][b.symbol] = a.symbol === b.symbol
+            ? 1
+            : this._pearsonCorrelation(a.prices, b.prices);
+        }
+      }
+
+      return { assets, timeframe, matrix, lastUpdated: new Date() };
+    } catch (error) {
+      logger.error('Error computing correlation matrix:', error);
+      throw error;
+    }
+  }
+
+  _pearsonCorrelation(x, y) {
+    const n = Math.min(x.length, y.length);
+    if (n < 2) return null;
+    const xs = x.slice(-n), ys = y.slice(-n);
+    const mx = xs.reduce((s, v) => s + v, 0) / n;
+    const my = ys.reduce((s, v) => s + v, 0) / n;
+    const num = xs.reduce((s, v, i) => s + (v - mx) * (ys[i] - my), 0);
+    const den = Math.sqrt(
+      xs.reduce((s, v) => s + Math.pow(v - mx, 2), 0) *
+      ys.reduce((s, v) => s + Math.pow(v - my, 2), 0)
+    );
+    return den === 0 ? 0 : parseFloat((num / den).toFixed(4));
+  }
+
   _timeframeToDays(tf) {
     const map = { '1d': 1, '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
     return map[tf] || 30;
