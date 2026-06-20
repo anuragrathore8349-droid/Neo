@@ -98,10 +98,16 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: initialData, 
           <div className="flex items-center justify-center h-full">
             <div className="text-dark-400">Loading...</div>
           </div>
+        ) : !chartData || chartData.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+            <p className="text-sm">No history yet — add assets to your portfolio to see performance.</p>
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={chartData}
+              data={chartData.length === 1 
+                ? [chartData[0], { ...chartData[0], timestamp: chartData[0].timestamp + 1 }]
+                : chartData}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
             >
               <defs>
