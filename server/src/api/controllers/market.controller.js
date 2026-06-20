@@ -297,18 +297,20 @@ class MarketController {
   }
   async getAvailableAssets(req, res, next) {
     try {
-      const prices = await marketService.getMarketPrices(POPULAR_ASSETS);
-      const formatted = POPULAR_ASSETS.map((symbol) => {
-        const data = prices[symbol];
-        let priceValue = 0;
-        if (typeof data === 'number') priceValue = data;
-        else if (data && typeof data === 'object') priceValue = Number(data.price) || 0;
-        return {
-          id: symbol.toLowerCase(), name: getAssetName(symbol),
-          symbol, type: 'crypto', price: Number(priceValue),
-        };
-      });
-      return res.json({ status: 'success', data: formatted });
+      // Returns all tradeable assets grouped by type for the trading UI
+      const assets = await marketService.getMarketAssets();
+      // Also include stock symbols for Pro users
+      const stockSymbols = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'NFLX'];
+      const stockPrices = await marketService.getStockPrices(stockSymbols);
+      const stocks = stockSymbols.map(sym => ({
+        id: sym.toLowerCase(),
+        symbol: sym,
+        name: sym,
+        type: 'stock',
+        price: stockPrices[sym]?.price ?? null,
+        change24h: stockPrices[sym]?.change24h ?? null,
+      }));
+      res.json({ status: 'success', data: { crypto: assets, stocks } });
     } catch (error) {
       next(error);
     }
