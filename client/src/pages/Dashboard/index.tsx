@@ -346,82 +346,32 @@ const Dashboard: React.FC = () => {
 
   // Subscribe to portfolio WebSocket for live P&L updates
   useEffect(() => {
-    if (!portfolioSummary?.portfolioId) return; // Wait for portfolio summary to load
-
-    const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
     const stored = localStorage.getItem('neofin_auth');
-    const token = stored ? JSON.parse(stored)?.accessToken : null;
+    const token  = stored ? JSON.parse(stored).accessToken : null;
     if (!token) return;
 
-    const socket = io(`${SOCKET_URL}/portfolio`, {
+    const WS_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
+    const socket = io(`${WS_URL}/portfolio`, {
       auth: { token },
-      transports: ['websocket'],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5
-    });
-
-    socket.on('connect', () => {
-      console.log('✓ Portfolio WebSocket connected, subscribing to portfolio updates');
-      // Subscribe to this user's portfolio with the actual portfolio ID
-      socket.emit('subscribe', portfolioSummary.portfolioId);
-    });
-
-    socket.on('portfolioUpdate', (data: any) => {
-      console.log('📊 Portfolio P&L update received:', data);
-      // Update the portfolio summary with new values
-      if (data?.data) {
-        setPortfolioSummary((prev: any) => ({
-          ...prev,
-          totalValue: data.data.totalValue ?? prev?.totalValue,
-          totalProfit: data.data.totalProfit ?? prev?.totalProfit,
-          totalProfitPercentage: data.data.totalProfitPercentage ?? prev?.totalProfitPercentage,
-          dailyChange: data.data.dailyChange ?? prev?.dailyChange,
-          dailyChangePercentage: data.data.dailyChangePercentage ?? prev?.dailyChangePercentage,
-          weeklyChange: data.data.weeklyChange ?? prev?.weeklyChange,
-          weeklyChangePercentage: data.data.weeklyChangePercentage ?? prev?.weeklyChangePercentage,
-          monthlyChange: data.data.monthlyChange ?? prev?.monthlyChange,
-          monthlyChangePercentage: data.data.monthlyChangePercentage ?? prev?.monthlyChangePercentage,
-          lastUpdated: new Date().toISOString()
-        }));
-      }
-      // Update assets if they're included in the broadcast
-      if (data?.data?.assets && Array.isArray(data.data.assets)) {
-        setPortfolioAssets((prev: any[]) =>
-          prev.map(asset => {
-            const update = data.data.assets.find((a: any) => a.symbol === asset.symbol);
-            if (update) {
-              return {
-                ...asset,
-                price: update.currentPrice ?? asset.price,
-                change24h: update.change24h ?? asset.change24h,
-                value: update.value ?? asset.value,
-                profitLoss: update.profit ?? asset.profitLoss,
-                profitLossPercentage: update.profitPercentage ?? asset.profitLossPercentage
-              };
-            }
-            return asset;
-          })
-        );
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('Portfolio WebSocket disconnected');
-    });
-
-    socket.on('error', (error: any) => {
-      console.error('Portfolio WebSocket error:', error);
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
     });
 
     portfolioSocketRef.current = socket;
-    return () => { 
-      if (portfolioSocketRef.current) {
-        console.log('Disconnecting portfolio WebSocket');
-        portfolioSocketRef.current.disconnect(); 
-      }
+
+    socket.on('portfolio_update', (data: any) => {
+      if (data) setPortfolioSummary(data);
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      console.warn('[Portfolio Socket] connect_error:', err.message);
+    });
+
+    return () => {
+      socket.disconnect();
+      portfolioSocketRef.current = null;
     };
-  }, [portfolioSummary?.portfolioId]);
+  }, []);
 
   // Fetch market summary
   useEffect(() => {
