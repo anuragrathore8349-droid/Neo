@@ -1,4 +1,5 @@
 const ethers = require('ethers');
+const axios = require('axios');
 const config = require('../config');
 const { logger } = require('../api/middlewares/logger.middleware');
 
@@ -294,6 +295,38 @@ class BlockchainTransactionService {
     } catch (error) {
       logger.error('Error merging transactions:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Get transaction receipt status from Etherscan
+   * @param {string} txHash - Transaction hash
+   * @param {string} network - Network identifier (optional)
+   * @returns {Promise<Object>} Transaction status object
+   */
+  async getTransactionReceipt(txHash, network = null) {
+    try {
+      const baseUrl = this.getEtherscanBaseUrl(network);
+      const response = await axios.get(baseUrl, {
+        params: {
+          module:  'transaction',
+          action:  'gettxreceiptstatus',
+          txhash:  txHash,
+          apikey:  this.etherscanApiKey || 'YourApiKeyToken',
+        },
+        timeout: 10000,
+      });
+
+      const result = response.data?.result;
+      const confirmed = result?.status === '1';
+      return {
+        txHash,
+        confirmed,
+        status: confirmed ? 'confirmed' : 'pending',
+      };
+    } catch (error) {
+      logger.error('Error getting transaction receipt:', error.message);
+      return { txHash, confirmed: false, status: 'unknown' };
     }
   }
 }
