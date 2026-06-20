@@ -1004,6 +1004,33 @@ async importAssetsFromCSV(userId, csvBuffer) {
       .on('error', reject);
   });
 }
+
+/**
+ * Add multiple assets to portfolio at once
+ * Used for CSV import
+ */
+async addMultipleAssets(userId, assets) {
+  const portfolio = await Portfolio.findOne({ userId });
+  if (!portfolio) {
+    throw new Error('Portfolio not found');
+  }
+
+  for (const asset of assets) {
+    const exists = portfolio.assets.find(a => a.symbol === asset.symbol);
+    if (exists) {
+      // Merge with existing asset
+      exists.amount    += asset.amount;
+      exists.costBasis  = (exists.costBasis * (exists.amount - asset.amount) + asset.costBasis * asset.amount) / exists.amount;
+    } else {
+      // Add new asset
+      portfolio.assets.push(asset);
+    }
+  }
+
+  await portfolio.save();
+  await this.updatePortfolioMetrics(portfolio);
+  return portfolio;
+}
 }
 
 module.exports = new PortfolioService();
