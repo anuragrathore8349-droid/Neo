@@ -107,35 +107,3 @@ class PortfolioController {
 }
 
 module.exports = new PortfolioController();
-      }
-
-      const csvText = req.file.buffer.toString('utf-8');
-      const lines   = csvText.split('\n').filter(Boolean);
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-
-      const assets = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',');
-        const row  = Object.fromEntries(headers.map((h, j) => [h, cols[j]?.trim()]));
-
-        if (row.symbol && row.amount) {
-          assets.push({
-            symbol:   row.symbol.toUpperCase(),
-            name:     row.name || row.symbol.toUpperCase(),
-            type:     row.type || 'crypto',
-            amount:   parseFloat(row.amount),
-            costBasis: parseFloat(row.cost_basis || row.costbasis || 0),
-            purchaseDate: row.date ? new Date(row.date) : new Date(),
-          });
-        }
-      }
-
-      const result = await portfolioService.addMultipleAssets(req.user.userId, assets);
-      res.json({ status: 'success', data: result, imported: assets.length });
-    } catch (error) {
-      next(error);
-    }
-  }
-}
-
-module.exports = new PortfolioController();
