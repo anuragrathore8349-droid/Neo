@@ -240,34 +240,33 @@ const seedData = {
   ],
 };
 
-async function seedDatabase() {
-  try {
-    await connectDB();
-    console.log('Connected to database');
+async function seedLearningContent() {
+  const { Article, Video, GlossaryTerm, Guide } = require('../models/learning.model');
+  const articleCount = await Article.countDocuments();
+  if (articleCount > 0) return; // Already seeded
 
-    // Clear existing data
-    await Article.deleteMany({});
-    await Video.deleteMany({});
-    await GlossaryTerm.deleteMany({});
-    await Guide.deleteMany({});
-    console.log('Cleared existing data');
-
-    // Insert new data
-    const articles = await Article.insertMany(seedData.articles);
-    const videos = await Video.insertMany(seedData.videos);
-    const glossaryTerms = await GlossaryTerm.insertMany(seedData.glossaryTerms);
-    const guides = await Guide.insertMany(seedData.guides);
-
-    console.log(`✅ Seeded ${articles.length} articles`);
-    console.log(`✅ Seeded ${videos.length} videos`);
-    console.log(`✅ Seeded ${glossaryTerms.length} glossary terms`);
-    console.log(`✅ Seeded ${guides.length} guides`);
-
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Seeding failed:', error);
-    process.exit(1);
-  }
+  await Promise.all([
+    Article.insertMany(seedData.articles || []),
+    Video.insertMany(seedData.videos || []),
+    GlossaryTerm.insertMany(seedData.glossaryTerms || []),
+    Guide.insertMany(seedData.guides || []),
+  ]);
 }
 
-seedDatabase();
+// Allow this to be called directly as a script OR imported as a module
+if (require.main === module) {
+  (async () => {
+    try {
+      await connectDB();
+      console.log('Connected to database');
+      await seedLearningContent();
+      console.log('✅ Learning content seeded successfully');
+      process.exit(0);
+    } catch (error) {
+      console.error('❌ Seeding failed:', error);
+      process.exit(1);
+    }
+  })();
+}
+
+module.exports = { seedLearningContent };
