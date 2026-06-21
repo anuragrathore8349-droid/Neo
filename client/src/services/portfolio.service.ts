@@ -506,15 +506,16 @@ export interface RebalanceResult {
  */
 export async function getRebalancePreview(portfolioId: string, objective: string = 'sharpe'): Promise<{ status: string; data?: RebalanceResult; message?: string }> {
   try {
-    const response = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
+    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
       method: 'POST',
       body: { objective, dryRun: true }
     });
-    
+    // Server wraps result in { status, data: { status:'preview', trades, ... } }
+    const inner = response.data || response;
     return {
-      status: response.status || 'success',
-      data: response.data,
-      message: response.message
+      status: inner.status === 'preview' ? 'success' : (inner.status || 'success'),
+      data: inner,
+      message: inner.message
     };
   } catch (error: any) {
     console.error('Error getting rebalance preview:', error);
@@ -530,15 +531,15 @@ export async function getRebalancePreview(portfolioId: string, objective: string
  */
 export async function applyRebalance(portfolioId: string, objective: string = 'sharpe'): Promise<{ status: string; data?: RebalanceResult; message?: string }> {
   try {
-    const response = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
+    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
       method: 'POST',
       body: { objective, dryRun: false }
     });
-    
+    const inner = response.data || response;
     return {
-      status: response.status || 'success',
-      data: response.data,
-      message: response.message
+      status: inner.status || 'success',
+      data: inner,
+      message: inner.message
     };
   } catch (error: any) {
     console.error('Error applying rebalance:', error);
@@ -621,35 +622,51 @@ export interface AddAssetPayload {
 export async function addAsset(payload: AddAssetPayload): Promise<{ status: string; data?: any }> {
   const response = await apiFetch('/api/portfolio/assets', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: payload,
   });
-  return { status: response.status || 'success', data: response.data };
+  return { status: (response as any).status || 'success', data: (response as any).data };
 }
 
-export async function updateAsset(assetId: string, payload: Partial<AddAssetPayload>): Promise<{ status: string; data?: any }> {
+export async function updateAsset(
+  assetId: string,
+  payload: Partial<AddAssetPayload>
+): Promise<{ status: string; data?: any }> {
   const response = await apiFetch(`/api/portfolio/assets/${assetId}`, {
     method: 'PUT',
-    body: JSON.stringify(payload),
+    body: payload,
   });
-  return { status: response.status || 'success', data: response.data };
+  return { status: (response as any).status || 'success', data: (response as any).data };
 }
 
 export async function deleteAsset(assetId: string): Promise<{ status: string; message?: string }> {
   const response = await apiFetch(`/api/portfolio/assets/${assetId}`, {
     method: 'DELETE',
   });
-  return { status: response.status || 'success', message: response.message };
+  return {
+    status: (response as any).status || 'success',
+    message: (response as any).message,
+  };
 }
 
 export async function importTransactionsCSV(file: File): Promise<{ status: string; data?: any }> {
   const formData = new FormData();
   formData.append('file', file);
-  const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/portfolio/transactions/import`, {
+
+  const AUTH_STORAGE_KEY = 'neofin_auth';
+  const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+  const token = stored ? JSON.parse(stored)?.accessToken : null;
+
+  const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3003';
+
+  const res = await fetch(`${API_BASE_URL}/api/portfolio/transactions/import`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
+    credentials: 'include',
   });
-  const data = await response.json();
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.message || 'CSV import failed');
   return { status: data.status || 'success', data: data.data };
 }
 
