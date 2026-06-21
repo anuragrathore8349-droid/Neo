@@ -1,5 +1,6 @@
+// client/src/pages/Trading/index.tsx
 import React, { useState, useEffect, useCallback, Component, ErrorInfo } from 'react';
-import { io } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/common/Tabs';
 import GlassCard from '../../components/common/GlassCard';
 import PriceTicker from '../../components/common/PriceTicker';
@@ -11,23 +12,23 @@ import OrderHistory from '../../components/trading/OrderHistory';
 import Watchlist from '../../components/trading/Watchlist';
 import DepositModal from '../../components/trading/DepositModal';
 import PriceAlerts from '../../components/trading/PriceAlerts';
+import ApiKeyManager from '../../components/trading/ApiKeyManager';
 import { useMarketSocket } from '../../hooks/useMarketSocket';
 import * as tradingApi from '../../services/trading.service';
 import * as marketApi from '../../services/market.service';
 import { Asset } from '../../types';
 import {
   Search, Star, Loader, RefreshCw, AlertCircle,
-  TrendingUp, TrendingDown, BarChart2, ArrowDownCircle, X,
+  TrendingUp, TrendingDown, BarChart2, ArrowDownCircle, X, Key,
+  CheckCircle,
 } from 'lucide-react';
 
-const ASSET_REFRESH_INTERVAL = 30_000;
-const ORDER_REFRESH_INTERVAL = 15_000;
+const ASSET_REFRESH_INTERVAL  = 30_000;
+const ORDER_REFRESH_INTERVAL  = 15_000;
+const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
 
-// ── Chart error boundary ─────────────────────────────────────────────────────
-class ChartErrorBoundary extends Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
+// ── Chart error boundary ──────────────────────────────────────────────────────
+class ChartErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
   componentDidCatch(e: Error, i: ErrorInfo) { console.error('[Chart]', e, i); }
@@ -37,10 +38,7 @@ class ChartErrorBoundary extends Component<
         <GlassCard className="flex items-center justify-center p-6" style={{ minHeight: 420 }}>
           <div className="text-center text-dark-400 text-sm">
             Chart failed to render.{' '}
-            <button
-              className="text-primary underline ml-1"
-              onClick={() => this.setState({ hasError: false })}
-            >
+            <button className="text-primary underline ml-1" onClick={() => this.setState({ hasError: false })}>
               Retry
             </button>
           </div>
@@ -50,73 +48,154 @@ class ChartErrorBoundary extends Component<
   }
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
+// ── Toast notification ────────────────────────────────────────────────────────
+interface Toast { id: number; message: string; type: 'success' | 'error' | 'info'; }
+
+// ── Main Component ────────────────────────────────────────────────────────────
 const Trading: React.FC = () => {
-  const [activeTab,       setActiveTab]       = useState('market');
-  const [orderSubTab,     setOrderSubTab]      = useState<'open' | 'history'>('open');
-  const [searchTerm,      setSearchTerm]       = useState('');
-  const [assetTypeFilter, setAssetTypeFilter]  = useState<string | null>(null);
-  const [selectedAsset,   setSelectedAsset]    = useState<Asset | null>(null);
-  const [assets,          setAssets]           = useState<Asset[]>([]);
-  const [watchlist,       setWatchlist]        = useState<string[]>([]);
-  const [orderBookData,   setOrderBookData]    = useState<{ asks: any[]; bids: any[] }>({ asks: [], bids: [] });
-  const [chartData,       setChartData]        = useState<any[]>([]);
-  const [openOrders,      setOpenOrders]       = useState<any[]>([]);
-  const [orderHistory,    setOrderHistory]     = useState<any[]>([]);
-  const [isAssetsLoading, setIsAssetsLoading]  = useState(false);
-  const [isOrdersLoading, setIsOrdersLoading]  = useState(false);
-  const [isChartLoading,  setIsChartLoading]   = useState(false);
-  const [isDepositOpen,   setIsDepositOpen]    = useState(false);
-  const [isPaperMode,     setIsPaperMode]      = useState(true); // Default to paper mode for safety
-  const [chartInterval,   setChartInterval]    = useState('1d');
-  const [portfolio,       setPortfolio]        = useState<any>(null);
-  const [error,           setError]            = useState<string | null>(null);
-  const [showAssetPanel,  setShowAssetPanel]   = useState(false);
+  const [activeTab,        setActiveTab]        = useState('market');
+  const [orderSubTab,      setOrderSubTab]       = useState<'open' | 'history'>('open');
+  const [searchTerm,       setSearchTerm]        = useState('');
+  const [assetTypeFilter,  setAssetTypeFilter]   = useState<string | null>(null);
+  const [selectedAsset,    setSelectedAsset]     = useState<Asset | null>(null);
+  const [assets,           setAssets]            = useState<Asset[]>([]);
+  const [watchlist,        setWatchlist]         = useState<string[]>([]);
+  const [orderBookData,    setOrderBookData]      = useState<{ asks: any[]; bids: any[] }>({ asks: [], bids: [] });
+  const [chartData,        setChartData]         = useState<any[]>([]);
+  const [openOrders,       setOpenOrders]        = useState<any[]>([]);
+  const [orderHistory,     setOrderHistory]      = useState<any[]>([]);
+  const [recentTrades,     setRecentTrades]      = useState<any[]>([]);
+  const [isAssetsLoading,  setIsAssetsLoading]   = useState(false);
+  const [isOrdersLoading,  setIsOrdersLoading]   = useState(false);
+  const [isChartLoading,   setIsChartLoading]    = useState(false);
+  const [isCancellingOrder,setIsCancellingOrder] = useState<string | null>(null);
+  const [isDepositOpen,    setIsDepositOpen]     = useState(false);
+  const [isPaperMode,      setIsPaperMode]       = useState(true);
+  const [chartInterval,    setChartInterval]     = useState('1d');
+  const [portfolio,        setPortfolio]         = useState<any>(null);
+  const [error,            setError]             = useState<string | null>(null);
+  const [orderError,       setOrderError]        = useState<string | null>(null);
+  const [showAssetPanel,   setShowAssetPanel]    = useState(false);
+  const [toasts,           setToasts]            = useState<Toast[]>([]);
+  const [paperInitialized, setPaperInitialized]  = useState(false);
 
   const intervalLabelMap: Record<string, string> = {
     '1H': '1h', '4H': '4h', '1D': '1d', '1W': '1w', '1M': '1d',
   };
 
-  // ── WebSocket order book (trading namespace) ──────────────────────────────
+  // ── Toast helper ──────────────────────────────────────────────────────────
+  const addToast = useCallback((message: string, type: Toast['type'] = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  }, []);
+
+  // ── Compute available balance / asset amount from portfolio ───────────────
+  const availableBalance = portfolio?.balance ?? 0;
+  const availableAssetAmount = React.useMemo(() => {
+    if (!portfolio || !selectedAsset) return 0;
+    const holding = (portfolio.holdings || portfolio.assets || []).find(
+      (h: any) => (h.symbol || '').toUpperCase() === selectedAsset.symbol.toUpperCase()
+    );
+    return holding?.amount ?? 0;
+  }, [portfolio, selectedAsset]);
+
+  // ── Auto-initialize paper account ─────────────────────────────────────────
+  useEffect(() => {
+    if (paperInitialized) return;
+    tradingApi.getPaperPortfolio()
+      .then((r: any) => {
+        setPortfolio(r.data);
+        setPaperInitialized(true);
+      })
+      .catch(async () => {
+        try {
+          const r: any = await tradingApi.initializePaperAccount();
+          setPortfolio(r.data);
+          setPaperInitialized(true);
+        } catch { /* silent */ }
+      });
+  }, [paperInitialized]);
+
+  // ── Refresh portfolio when switching modes ────────────────────────────────
+  const refreshPortfolio = useCallback(async () => {
+    try {
+      if (isPaperMode) {
+        const r: any = await tradingApi.getPaperPortfolio();
+        setPortfolio(r.data);
+      }
+    } catch { /* silent */ }
+  }, [isPaperMode]);
+
+  useEffect(() => { refreshPortfolio(); }, [isPaperMode]);
+
+  // ── WebSocket: live orderbook via trading namespace ───────────────────────
   useEffect(() => {
     if (!selectedAsset) return;
-    const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || window.location.origin;
+
     const stored = localStorage.getItem('neofin_auth');
-    const token = stored ? JSON.parse(stored)?.accessToken : null;
+    const token  = stored ? JSON.parse(stored)?.accessToken : null;
     if (!token) return;
 
-    const tradingSocket = io(`${SOCKET_URL}/trading`, {
-      auth: { token },
+    const sock: Socket = io(`${SOCKET_URL}/trading`, {
+      auth:       { token },
       transports: ['websocket'],
     });
 
-    tradingSocket.on('connect', () => {
-      tradingSocket.emit('subscribeOrderbook', { symbol: selectedAsset.symbol });
+    sock.on('connect', () => {
+      sock.emit('subscribeOrderbook', { symbol: selectedAsset.symbol });
+      sock.emit('subscribeTrades',    { symbol: selectedAsset.symbol });
     });
 
-    tradingSocket.on('orderbook', (data: any) => {
-      if (data?.symbol === selectedAsset?.symbol && data?.data) {
-        setOrderBookData(data.data);
+    sock.on('orderbook', (data: any) => {
+      const payload = data?.data || data;
+      if (payload?.bids || payload?.asks) {
+        setOrderBookData({ bids: payload.bids || [], asks: payload.asks || [] });
       }
     });
 
+    sock.on('trade', (data: any) => {
+      const t = data?.data || data;
+      setRecentTrades(prev => [t, ...prev].slice(0, 50));
+    });
+
+    // ── Realtime order fill / update ──────────────────────────────────────
+    sock.on('orderUpdate', (data: any) => {
+      setOpenOrders(prev =>
+        prev.map(o => (o.id === data.orderId || o._id === data.orderId)
+          ? { ...o, ...data }
+          : o
+        ).filter(o => o.status === 'open')
+      );
+      if (data.status === 'filled') {
+        addToast(`Order filled: ${data.orderId?.slice(-6)}`, 'success');
+        refreshPortfolio();
+      }
+    });
+
+    sock.on('orderFill', (fill: any) => {
+      addToast(`Trade executed: ${fill.side?.toUpperCase()} ${fill.amount} @ $${fill.price}`, 'success');
+      refreshPortfolio();
+    });
+
     return () => {
-      tradingSocket.emit('unsubscribeOrderbook', { symbol: selectedAsset.symbol });
-      tradingSocket.disconnect();
+      sock.emit('unsubscribeOrderbook', { symbol: selectedAsset.symbol });
+      sock.emit('unsubscribeTrades',    { symbol: selectedAsset.symbol });
+      sock.disconnect();
     };
   }, [selectedAsset?.symbol]);
 
-  // ── WebSocket live price updates ──────────────────────────────────────────
+  // ── WebSocket: live price updates ─────────────────────────────────────────
   useMarketSocket({
-    symbols: assets.map(a => a.symbol),
-    enabled: assets.length > 0,
+    symbols:  assets.map(a => a.symbol),
+    enabled:  assets.length > 0,
     onPriceUpdate: ({ symbol, price }) => {
       setAssets(prev => prev.map(a => a.symbol === symbol ? { ...a, price } : a));
       setSelectedAsset(prev => prev?.symbol === symbol ? { ...prev, price } : prev);
     },
   });
 
-  // ── Fetch assets ──────────────────────────────────────────────────────────
+  // ── Fetch market assets ───────────────────────────────────────────────────
   const fetchMarketAssets = useCallback(async (silent = false) => {
     if (!silent) setIsAssetsLoading(true);
     setError(null);
@@ -131,7 +210,7 @@ const Trading: React.FC = () => {
         if (updated) setSelectedAsset(updated);
       }
     } catch {
-      setError('Failed to load market data. Please try again.');
+      if (!silent) setError('Failed to load market data. Please try again.');
     } finally {
       if (!silent) setIsAssetsLoading(false);
     }
@@ -145,10 +224,7 @@ const Trading: React.FC = () => {
 
   // ── Watchlist ─────────────────────────────────────────────────────────────
   const fetchWatchlist = useCallback(async () => {
-    try {
-      const r = await marketApi.getWatchlist();
-      setWatchlist(r.data || []);
-    } catch { /* silent */ }
+    try { const r = await marketApi.getWatchlist(); setWatchlist(r.data || []); } catch { /* silent */ }
   }, []);
 
   useEffect(() => { fetchWatchlist(); }, []);
@@ -160,12 +236,11 @@ const Trading: React.FC = () => {
     try {
       await (inList ? marketApi.removeFromWatchlist(upper) : marketApi.addToWatchlist(upper));
     } catch {
-      // rollback
       setWatchlist(prev => inList ? [...prev, upper] : prev.filter(s => s !== upper));
     }
   }, [watchlist]);
 
-  // ── Chart ─────────────────────────────────────────────────────────────────
+  // ── Chart data ────────────────────────────────────────────────────────────
   const fetchChartData = useCallback(async (symbol: string, interval: string) => {
     setIsChartLoading(true);
     try {
@@ -175,165 +250,124 @@ const Trading: React.FC = () => {
         Array.isArray(prices)
           ? prices.map((p: any) => ({
               date:   new Date(p.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-              open:   p.open,
-              close:  p.close,
-              high:   p.high,
-              low:    p.low,
-              volume: p.volume || 0,
+              open:   p.open, close: p.close, high: p.high, low: p.low, volume: p.volume || 0,
             }))
           : []
       );
-    } catch {
-      setChartData([]);
-    } finally {
-      setIsChartLoading(false);
-    }
-  }, []);
-
-  // ── Order book ────────────────────────────────────────────────────────────
-  const fetchOrderBook = useCallback(async (symbol: string) => {
-    try {
-      const response = await tradingApi.getOrderBook(symbol, 20);
-      const data     = (response as any).data || response;
-      setOrderBookData({ asks: data.asks || [], bids: data.bids || [] });
-    } catch { /* non-critical */ }
+    } catch { setChartData([]); }
+    finally  { setIsChartLoading(false); }
   }, []);
 
   // ── Orders ────────────────────────────────────────────────────────────────
-  const fetchOrders = useCallback(async (symbol?: string) => {
+  const loadOpenOrders = useCallback(async (symbol?: string) => {
     try {
-      const [openRes, histRes] = await Promise.all([
-        tradingApi.getOpenOrders(symbol),
-        tradingApi.getOrderHistory(undefined, undefined, undefined, 100),
-      ]);
-      setOpenOrders((openRes  as any).data || []);
-      setOrderHistory((histRes as any).data || []);
-    } catch { /* non-critical */ }
+      const r: any = await tradingApi.getOpenOrders(symbol);
+      setOpenOrders(r.data || []);
+    } catch { /* silent */ }
   }, []);
 
-  // ── Paper portfolio ───────────────────────────────────────────────────────
-  const fetchPortfolio = useCallback(async () => {
+  const loadOrderHistory = useCallback(async (symbol?: string) => {
     try {
-      const r = await tradingApi.getPaperPortfolio();
-      setPortfolio((r as any).data || r);
-    } catch { /* non-critical */ }
+      const r: any = await tradingApi.getOrderHistory(symbol);
+      setOrderHistory(r.data || []);
+    } catch { /* silent */ }
   }, []);
 
-  // ── Effects ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!selectedAsset) return;
-    fetchChartData(selectedAsset.symbol, chartInterval);
-    fetchOrderBook(selectedAsset.symbol);
-    fetchOrders(selectedAsset.symbol);
-  }, [selectedAsset?.symbol]);
+  // ── Select asset ──────────────────────────────────────────────────────────
+  const handleSelectAsset = useCallback((asset: Asset) => {
+    setSelectedAsset(asset);
+    setShowAssetPanel(false);
+    fetchChartData(asset.symbol, chartInterval);
+    loadOpenOrders(asset.symbol);
+    loadOrderHistory(asset.symbol);
+  }, [chartInterval, fetchChartData, loadOpenOrders, loadOrderHistory]);
 
   useEffect(() => {
-    if (!selectedAsset) return;
-    fetchChartData(selectedAsset.symbol, chartInterval);
-  }, [chartInterval]);
+    if (selectedAsset) {
+      fetchChartData(selectedAsset.symbol, chartInterval);
+      loadOpenOrders(selectedAsset.symbol);
+      loadOrderHistory(selectedAsset.symbol);
+    }
+  }, [selectedAsset?.symbol, chartInterval]);
 
   useEffect(() => {
-    if (!selectedAsset) return;
-    const id = window.setInterval(() => fetchOrderBook(selectedAsset.symbol), 10_000);
+    const id = window.setInterval(() => {
+      if (selectedAsset) {
+        loadOpenOrders(selectedAsset.symbol);
+        loadOrderHistory(selectedAsset.symbol);
+      }
+    }, ORDER_REFRESH_INTERVAL);
     return () => window.clearInterval(id);
   }, [selectedAsset?.symbol]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => fetchOrders(selectedAsset?.symbol), ORDER_REFRESH_INTERVAL);
-    return () => window.clearInterval(id);
-  }, [selectedAsset?.symbol]);
-
-  // Fetch portfolio on mount and whenever paper mode toggles
-  useEffect(() => { fetchPortfolio(); }, [isPaperMode]);
-
-  // ── Balances for TradeForm ────────────────────────────────────────────────
-  const availableBalance     = portfolio?.balance ?? 0;
-  const availableAssetAmount = selectedAsset
-    ? portfolio?.holdings?.find((h: any) => h.symbol?.toUpperCase() === selectedAsset.symbol?.toUpperCase())?.quantity ?? 0
-    : 0;
 
   // ── Place order ───────────────────────────────────────────────────────────
   const handlePlaceOrder = useCallback(async (order: any) => {
     if (!selectedAsset) return;
-    
-    if (!isPaperMode) {
-      const confirmed = window.confirm(
-        'You are placing a LIVE trade that will use REAL funds on an exchange. Continue?'
-      );
-      if (!confirmed) return;
-    }
-    
+    setOrderError(null);
     setIsOrdersLoading(true);
+
     try {
+      const payload = {
+        symbol:      selectedAsset.symbol,
+        exchange:    isPaperMode ? 'paper' : (order.exchange || 'binance'),
+        type:        order.type,
+        side:        order.side,
+        amount:      order.amount,
+        price:       order.price,
+        stopPrice:   order.stopPrice,
+        timeInForce: order.timeInForce || 'GTC',
+        postOnly:    order.postOnly    || false,
+        reduceOnly:  order.reduceOnly  || false,
+        mode:        isPaperMode ? 'paper' : 'live',
+        stopLoss:    order.stopLoss,
+        takeProfit:  order.takeProfit,
+      };
+
+      const response: any = await tradingApi.placeOrder(payload);
+      const orderData = response.data;
+
       if (isPaperMode) {
-        await tradingApi.placePaperTrade({
-          symbol: selectedAsset.symbol,
-          side:   order.side,
-          amount: order.amount,
-          price:  order.price,
-          type:   (order.type === 'market' || order.type === 'limit') ? order.type : 'market',
-        });
-        await fetchPortfolio();
+        addToast(`Paper ${order.side.toUpperCase()} order placed!`, 'success');
+        await refreshPortfolio();
       } else {
-        await tradingApi.placeOrder({
-          symbol:      selectedAsset.symbol,
-          exchange:    order.exchange || 'binance',
-          type:        order.type        || 'market',
-          side:        order.side        || 'buy',
-          amount:      order.amount      || 0,
-          price:       order.price,
-          stopPrice:   order.stopPrice,
-          timeInForce: order.timeInForce || 'GTC',
-          postOnly:    order.postOnly    || false,
-          reduceOnly:  order.reduceOnly  || false,
-          mode:        'live',
-          stopLoss:    order.stopLoss,
-          takeProfit:  order.takeProfit,
-        });
+        addToast(`${order.side.toUpperCase()} order submitted to exchange`, 'success');
+        setOpenOrders(prev => [orderData, ...prev]);
       }
-      setTimeout(() => fetchOrders(selectedAsset.symbol), 1500);
-    } catch (err: any) {
-      let errorMessage = err?.message || 'Failed to place order. Please try again.';
-      
-      // Enhanced error detection for API/authentication issues
-      const isApiError = errorMessage.toLowerCase().includes('api') || 
-                        errorMessage.toLowerCase().includes('key') || 
-                        errorMessage.toLowerCase().includes('auth');
-      
-      if (isApiError && !isPaperMode) {
-        errorMessage = 'Live trading requires exchange API keys configured on the server. Switch to Paper Mode to practice safely.';
-      }
-      
-      setError(errorMessage);
-      setTimeout(() => setError(null), 5000);
+
+      await loadOrderHistory(selectedAsset.symbol);
+    } catch (error: any) {
+      const msg = error?.message || 'Failed to place order.';
+      setOrderError(msg);
+      addToast(msg, 'error');
     } finally {
       setIsOrdersLoading(false);
     }
-  }, [selectedAsset, isPaperMode]);
+  }, [selectedAsset, isPaperMode, refreshPortfolio, loadOrderHistory]);
 
+  // ── Cancel order ──────────────────────────────────────────────────────────
   const handleCancelOrder = useCallback(async (orderId: string) => {
+    setIsCancellingOrder(orderId);
     try {
       await tradingApi.cancelOrder(orderId);
-      await fetchOrders(selectedAsset?.symbol);
-    } catch { /* non-critical */ }
-  }, [selectedAsset?.symbol]);
+      setOpenOrders(prev => prev.filter(o => (o.id || o._id) !== orderId));
+      addToast('Order cancelled', 'info');
+    } catch (error: any) {
+      setOrderError(error?.message || 'Failed to cancel order.');
+    } finally {
+      setIsCancellingOrder(null);
+    }
+  }, []);
 
-  // ── Filter assets ─────────────────────────────────────────────────────────
-  const filteredAssets = assets.filter(asset => {
-    const matchesSearch =
-      searchTerm === '' ||
+  // ── Filtered assets ───────────────────────────────────────────────────────
+  const filteredAssets = React.useMemo(() => assets.filter(asset => {
+    const matchesSearch = searchTerm === '' ||
       asset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       asset.symbol.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = assetTypeFilter === null || asset.type === assetTypeFilter;
     return matchesSearch && matchesType;
-  });
+  }), [assets, searchTerm, assetTypeFilter]);
 
-  const handleSelectAsset = (asset: Asset) => {
-    setSelectedAsset(asset);
-    setShowAssetPanel(false);
-  };
-
-  // ── Asset list panel (sidebar + mobile slide-over) ────────────────────────
+  // ── Asset list panel ──────────────────────────────────────────────────────
   const AssetListPanel = () => (
     <div className="flex flex-col h-full">
       <div className="relative mb-3">
@@ -348,7 +382,7 @@ const Trading: React.FC = () => {
       </div>
 
       <div className="flex gap-1 mb-3 flex-wrap">
-        {['All', 'Crypto', 'Stock', 'Forex'].map(f => (
+        {['All','Crypto','Stock','Forex'].map(f => (
           <button
             key={f}
             className={`px-2.5 py-1 text-xs rounded-md font-medium transition-all ${
@@ -393,7 +427,7 @@ const Trading: React.FC = () => {
                       onClick={e => { e.stopPropagation(); toggleWatchlist(asset.symbol); }}
                       className="text-dark-500 hover:text-amber-400 transition-colors"
                     >
-                      <Star size={10} className={watchlist.includes(asset.symbol) ? 'text-amber-400 fill-amber-400' : ''} />
+                      <Star size={10} className={watchlist.includes(asset.symbol.toUpperCase()) ? 'text-amber-400 fill-amber-400' : ''} />
                     </button>
                   </div>
                   <p className="text-dark-400 text-xs truncate">{asset.name}</p>
@@ -401,9 +435,8 @@ const Trading: React.FC = () => {
               </div>
               <div className="text-right flex-shrink-0 ml-2">
                 <p className="text-sm font-medium text-light">
-                  {(asset as any).priceUnavailable
-                    ? '—'
-                    : `$${(asset.price ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  {(asset as any).priceUnavailable ? '—' :
+                    `$${(asset.price ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </p>
                 <p className={`text-xs flex items-center justify-end gap-0.5 ${(asset.change24h ?? 0) >= 0 ? 'text-secondary' : 'text-red-400'}`}>
                   {(asset.change24h ?? 0) >= 0 ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
@@ -417,27 +450,30 @@ const Trading: React.FC = () => {
     </div>
   );
 
-  // ────────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    /*
-     * KEY FIX: overflow-x-hidden on the outermost div.
-     * This ensures nothing — not the ticker, not a wide table — can widen
-     * the page and produce a horizontal scrollbar.
-     */
     <div className="min-h-screen w-full overflow-x-hidden">
 
-      {/* ── Price Ticker (full-width, no negative margin) ─────────────────── */}
-      {/*
-       * Render PriceTicker OUTSIDE the padded page container.
-       * We use a negative-margin approach only if the parent has overflow:hidden.
-       * Safest approach: let the ticker be its own full-width block here,
-       * and accept whatever padding the page layout gives it.
-       * If your layout wraps content in a padded container, either:
-       *   (a) move PriceTicker above that container, or
-       *   (b) use the approach below with overflow-x:hidden on the page root.
-       */}
+      {/* ── Toast notifications ───────────────────────────────────────────── */}
+      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 max-w-xs">
+        {toasts.map(t => (
+          <div
+            key={t.id}
+            className={`flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all ${
+              t.type === 'success' ? 'bg-green-600' :
+              t.type === 'error'   ? 'bg-red-600'   : 'bg-dark-700 border border-dark-600'
+            }`}
+          >
+            {t.type === 'success' && <CheckCircle size={14} />}
+            {t.type === 'error'   && <AlertCircle size={14} />}
+            {t.message}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Price Ticker ──────────────────────────────────────────────────── */}
       <div className="w-full mb-4">
-        <PriceTicker />
+    {   /*<PriceTicker /> */}
       </div>
 
       {/* ── Page Header ───────────────────────────────────────────────────── */}
@@ -455,7 +491,7 @@ const Trading: React.FC = () => {
             {isPaperMode ? '📄 Paper Mode' : '💰 Live Mode'}
           </button>
           <button
-            onClick={() => { setActiveTab('orders'); }}
+            onClick={() => { setActiveTab('orders'); setOrderSubTab('history'); }}
             className="btn-outline text-sm px-3 py-1.5"
           >
             Order History
@@ -472,8 +508,7 @@ const Trading: React.FC = () => {
       {/* ── Error banner ──────────────────────────────────────────────────── */}
       {error && (
         <div className="mb-3 flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
-          <AlertCircle size={15} className="flex-shrink-0" />
-          {error}
+          <AlertCircle size={15} className="flex-shrink-0" />{error}
         </div>
       )}
 
@@ -481,10 +516,14 @@ const Trading: React.FC = () => {
       {isPaperMode && portfolio && (
         <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[
-            { label: 'Cash Balance', value: `$${(portfolio.balance ?? 0).toFixed(2)}`,                                                         color: '' },
-            { label: 'Invested',     value: `$${(portfolio.investedAmount ?? 0).toFixed(2)}`,                                                   color: '' },
-            { label: 'P&L',          value: `${(portfolio.profitLoss ?? 0) >= 0 ? '+' : ''}$${(portfolio.profitLoss ?? 0).toFixed(2)}`,         color: (portfolio.profitLoss ?? 0) >= 0 ? 'text-secondary' : 'text-red-400' },
-            { label: 'Return',       value: `${(portfolio.profitLossPercentage ?? 0) >= 0 ? '+' : ''}${(portfolio.profitLossPercentage ?? 0).toFixed(2)}%`, color: (portfolio.profitLossPercentage ?? 0) >= 0 ? 'text-secondary' : 'text-red-400' },
+            { label: 'Cash Balance', value: `$${(portfolio.balance ?? 0).toFixed(2)}`, color: '' },
+            { label: 'Invested',     value: `$${(portfolio.investedAmount ?? 0).toFixed(2)}`, color: '' },
+            { label: 'P&L',
+              value: `${(portfolio.profitLoss ?? 0) >= 0 ? '+' : ''}$${(portfolio.profitLoss ?? 0).toFixed(2)}`,
+              color: (portfolio.profitLoss ?? 0) >= 0 ? 'text-secondary' : 'text-red-400' },
+            { label: 'Return',
+              value: `${(portfolio.profitLossPercentage ?? 0) >= 0 ? '+' : ''}${(portfolio.profitLossPercentage ?? 0).toFixed(2)}%`,
+              color: (portfolio.profitLossPercentage ?? 0) >= 0 ? 'text-secondary' : 'text-red-400' },
           ].map(({ label, value, color }) => (
             <GlassCard key={label} className="p-3">
               <p className="text-xs text-dark-400 mb-0.5">{label}</p>
@@ -503,6 +542,7 @@ const Trading: React.FC = () => {
             <TabsTrigger value="watchlist">Watchlist</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="alerts">Alerts</TabsTrigger>
+            <TabsTrigger value="apikeys"><Key size={12} className="mr-1 inline-block" />API Keys</TabsTrigger>
           </TabsList>
         </div>
 
@@ -517,7 +557,7 @@ const Trading: React.FC = () => {
 
         {/* ── TRADE ───────────────────────────────────────────────────────── */}
         <TabsContent value="trade" className="pt-4">
-          {/* Mobile: button to open asset panel */}
+          {/* Mobile button */}
           <div className="lg:hidden mb-3 flex items-center gap-2">
             <button
               onClick={() => setShowAssetPanel(true)}
@@ -527,19 +567,12 @@ const Trading: React.FC = () => {
               {selectedAsset ? (
                 <span>
                   <span className="font-semibold">{selectedAsset.symbol}</span>
-                  {' — '}$
-                  {(selectedAsset.price ?? 0).toLocaleString('en-US', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
+                  {' — '}${(selectedAsset.price ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               ) : 'Select Asset'}
             </button>
             {selectedAsset && (
-              <button
-                onClick={() => setIsDepositOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-white text-sm"
-              >
+              <button onClick={() => setIsDepositOpen(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-white text-sm">
                 <ArrowDownCircle size={14} /> Deposit
               </button>
             )}
@@ -556,42 +589,40 @@ const Trading: React.FC = () => {
                     <X size={18} />
                   </button>
                 </div>
-                <div className="flex-1 min-h-0">
-                  <AssetListPanel />
-                </div>
+                <div className="flex-1 min-h-0"><AssetListPanel /></div>
               </div>
             </div>
           )}
 
-          {/* Desktop: sidebar + main */}
+          {/* Desktop layout */}
           <div className="flex flex-col lg:flex-row gap-4 w-full">
             {/* Sidebar */}
             <div className="hidden lg:flex flex-col w-56 xl:w-64 flex-shrink-0">
-              <GlassCard
-                className="p-3 flex flex-col"
-                style={{ height: 'calc(100vh - 220px)', minHeight: 400 }}
-              >
+              <GlassCard className="p-3 flex flex-col" style={{ height: 'calc(100vh - 220px)', minHeight: 400 }}>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-semibold text-sm">Assets</h3>
-                  <button
-                    onClick={() => fetchMarketAssets()}
-                    className="p-1 rounded text-dark-400 hover:text-light"
-                    title="Refresh"
-                  >
+                  <button onClick={() => fetchMarketAssets()} className="p-1 rounded text-dark-400 hover:text-light" title="Refresh">
                     <RefreshCw size={13} />
                   </button>
                 </div>
-                <div className="flex-1 min-h-0">
-                  <AssetListPanel />
-                </div>
+                <div className="flex-1 min-h-0"><AssetListPanel /></div>
               </GlassCard>
             </div>
 
-            {/* Main trading area — min-w-0 prevents it overflowing flex parent */}
+            {/* Main area */}
             <div className="flex-1 min-w-0 space-y-4">
               {selectedAsset ? (
                 <>
-                  {/* Chart + TradeForm */}
+                  {/* Order error */}
+                  {orderError && (
+                    <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                      <AlertCircle size={14} />
+                      <span>{orderError}</span>
+                      <button onClick={() => setOrderError(null)} className="ml-auto"><X size={14} /></button>
+                    </div>
+                  )}
+
+                  {/* Chart + Trade Form */}
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start w-full">
                     <div className="xl:col-span-2 min-w-0 w-full overflow-hidden">
                       <ChartErrorBoundary>
@@ -636,7 +667,7 @@ const Trading: React.FC = () => {
                     <div className="xl:col-span-2 min-w-0 w-full overflow-hidden">
                       <GlassCard className="p-4">
                         <div className="flex gap-4 mb-4 border-b border-dark-700">
-                          {(['open', 'history'] as const).map(tab => (
+                          {(['open','history'] as const).map(tab => (
                             <button
                               key={tab}
                               onClick={() => setOrderSubTab(tab)}
@@ -646,9 +677,7 @@ const Trading: React.FC = () => {
                                   : 'border-transparent text-dark-400 hover:text-light'
                               }`}
                             >
-                              {tab === 'open'
-                                ? `Open Orders (${openOrders.length})`
-                                : 'Order History'}
+                              {tab === 'open' ? `Open Orders (${openOrders.length})` : 'Order History'}
                             </button>
                           ))}
                         </div>
@@ -656,6 +685,7 @@ const Trading: React.FC = () => {
                           orders={orderSubTab === 'open' ? openOrders : orderHistory}
                           showCancelButton={orderSubTab === 'open'}
                           onCancelOrder={handleCancelOrder}
+                          cancellingId={isCancellingOrder}
                         />
                       </GlassCard>
                     </div>
@@ -666,12 +696,8 @@ const Trading: React.FC = () => {
                   <div className="text-center">
                     <BarChart2 size={40} className="mx-auto mb-3 text-dark-500" />
                     <p className="text-lg font-medium mb-1">No asset selected</p>
-                    <p className="text-dark-400 text-sm mb-4">
-                      Choose an asset from the sidebar to start trading
-                    </p>
-                    <button onClick={() => setShowAssetPanel(true)} className="btn-primary lg:hidden">
-                      Browse Assets
-                    </button>
+                    <p className="text-dark-400 text-sm mb-4">Choose an asset from the sidebar to start trading</p>
+                    <button onClick={() => setShowAssetPanel(true)} className="btn-primary lg:hidden">Browse Assets</button>
                   </div>
                 </GlassCard>
               )}
@@ -695,25 +721,33 @@ const Trading: React.FC = () => {
         {/* ── ORDERS ──────────────────────────────────────────────────────── */}
         <TabsContent value="orders" className="pt-4">
           <GlassCard className="p-4">
-            <div className="flex gap-4 mb-4 border-b border-dark-700">
-              {(['open', 'history'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setOrderSubTab(tab)}
-                  className={`pb-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                    orderSubTab === tab
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-dark-400 hover:text-light'
-                  }`}
-                >
-                  {tab === 'open' ? `Open Orders (${openOrders.length})` : 'Order History'}
-                </button>
-              ))}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex gap-4 border-b border-dark-700 flex-1">
+                {(['open','history'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setOrderSubTab(tab)}
+                    className={`pb-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                      orderSubTab === tab ? 'border-primary text-primary' : 'border-transparent text-dark-400 hover:text-light'
+                    }`}
+                  >
+                    {tab === 'open' ? `Open Orders (${openOrders.length})` : 'Order History'}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => { loadOpenOrders(selectedAsset?.symbol); loadOrderHistory(selectedAsset?.symbol); }}
+                className="p-1.5 rounded text-dark-400 hover:text-light ml-3"
+                title="Refresh"
+              >
+                <RefreshCw size={14} />
+              </button>
             </div>
             <OrderHistory
               orders={orderSubTab === 'open' ? openOrders : orderHistory}
               showCancelButton={orderSubTab === 'open'}
               onCancelOrder={handleCancelOrder}
+              cancellingId={isCancellingOrder}
             />
           </GlassCard>
         </TabsContent>
@@ -721,6 +755,11 @@ const Trading: React.FC = () => {
         {/* ── ALERTS ──────────────────────────────────────────────────────── */}
         <TabsContent value="alerts" className="pt-4">
           <PriceAlerts assets={assets} />
+        </TabsContent>
+
+        {/* ── API KEYS (new) ───────────────────────────────────────────────── */}
+        <TabsContent value="apikeys" className="pt-4">
+          <ApiKeyManager />
         </TabsContent>
       </Tabs>
 
