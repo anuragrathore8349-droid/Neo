@@ -6,7 +6,9 @@ export interface AuthUser {
   firstName?: string;
   lastName?: string;
   role?: string;
+  isTwoFactorEnabled?: boolean;
   twoFactorEnabled?: boolean;
+  isEmailVerified?: boolean;
   phoneNumber?: string;
   country?: string;
   dateOfBirth?: string;
@@ -27,6 +29,7 @@ export interface AuthUser {
 interface ApiResponse<T> {
   status: string;
   data: T;
+  message?: string;
 }
 
 interface LoginResponseData {
@@ -40,17 +43,33 @@ interface RefreshTokenResponseData {
   refreshToken?: string;
 }
 
-export async function login(email: string, password: string): Promise<ApiResponse<LoginResponseData>> {
+export async function login(
+  email: string,
+  password: string,
+  twoFactorCode?: string
+): Promise<ApiResponse<LoginResponseData>> {
   return apiFetch<ApiResponse<LoginResponseData>>('/api/auth/login', {
     method: 'POST',
-    body: { email, password }
+    body: { email, password, ...(twoFactorCode ? { twoFactorCode } : {}) }
   });
 }
 
-export async function register(firstName: string, lastName: string, email: string, password: string): Promise<ApiResponse<unknown>> {
-  return apiFetch<ApiResponse<unknown>>('/api/auth/register', {
+export async function register(
+  firstName: string,
+  lastName: string,
+  email: string,
+  password: string
+): Promise<ApiResponse<{ userId: string; email: string }>> {
+  return apiFetch<ApiResponse<{ userId: string; email: string }>>('/api/auth/register', {
     method: 'POST',
     body: { firstName, lastName, email, password }
+  });
+}
+
+export async function resendVerification(email: string): Promise<ApiResponse<unknown>> {
+  return apiFetch<ApiResponse<unknown>>('/api/auth/resend-verification', {
+    method: 'POST',
+    body: { email }
   });
 }
 
@@ -79,6 +98,7 @@ export interface VerifyEmailResponseData {
     isEmailVerified: boolean;
   };
   accessToken: string;
+  refreshToken?: string;
 }
 
 export async function verifyEmail(token: string): Promise<ApiResponse<VerifyEmailResponseData>> {
@@ -103,21 +123,29 @@ export async function refreshToken(): Promise<ApiResponse<RefreshTokenResponseDa
   return refreshTokenPromise;
 }
 
-export async function logout(accessToken: string): Promise<ApiResponse<unknown>> {
+export async function logout(): Promise<ApiResponse<unknown>> {
+  // apiFetch automatically attaches the current access token (if any) and
+  // sends cookies, so the refresh token cookie is available server-side too.
   return apiFetch<ApiResponse<unknown>>('/api/auth/logout', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    method: 'POST'
   });
 }
 
-export async function verifyTwoFactor(token: string, accessToken: string): Promise<ApiResponse<{ verified: boolean }>> {
+export async function verifyTwoFactor(token: string): Promise<ApiResponse<{ verified: boolean }>> {
   return apiFetch<ApiResponse<{ verified: boolean }>>('/api/auth/2fa/verify', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
     body: { token }
+  });
+}
+
+export async function setupTwoFactor(): Promise<ApiResponse<{ secret: string; qrCode: string }>> {
+  return apiFetch<ApiResponse<{ secret: string; qrCode: string }>>('/api/auth/2fa/setup', {
+    method: 'POST'
+  });
+}
+
+export async function disableTwoFactor(): Promise<ApiResponse<unknown>> {
+  return apiFetch<ApiResponse<unknown>>('/api/auth/2fa/disable', {
+    method: 'POST'
   });
 }
