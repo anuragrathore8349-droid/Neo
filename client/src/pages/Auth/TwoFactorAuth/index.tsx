@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -14,11 +14,18 @@ const twoFactorSchema = z.object({
 
 type TwoFactorFormData = z.infer<typeof twoFactorSchema>;
 
+interface LocationState {
+  email?: string;
+  password?: string;
+}
+
 const TwoFactorAuth: React.FC = () => {
-  const { verifyTwoFactor, isLoading, error, setError } = useAuth();
+  const { login, isLoading, error, setError } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { email, password } = (location.state as LocationState) || {};
   const [digits, setDigits] = useState<string[]>(Array(6).fill(''));
-  
+
   const {
     handleSubmit,
     formState: { errors },
@@ -33,7 +40,14 @@ const TwoFactorAuth: React.FC = () => {
   React.useEffect(() => {
     // Clear any existing errors when component mounts
     setError(null);
-  }, [setError]);
+
+    // This page only makes sense as a continuation of the login flow.
+    // If someone lands here directly (e.g. page refresh), send them back
+    // to login since we no longer have their credentials.
+    if (!email || !password) {
+      navigate('/login', { replace: true });
+    }
+  }, [setError, email, password, navigate]);
 
   const handleDigitChange = (index: number, value: string) => {
     if (value.length > 1) {
@@ -85,11 +99,16 @@ const TwoFactorAuth: React.FC = () => {
   };
 
   const onSubmit = async (data: TwoFactorFormData) => {
+    if (!email || !password) {
+      navigate('/login');
+      return;
+    }
     try {
-      await verifyTwoFactor(data.code);
+      // Complete the login now that we have the 2FA code too.
+      await login(email, password, data.code);
       navigate('/dashboard');
     } catch (err) {
-      // Error is handled in the auth context
+      // Error is handled in the auth context (e.g. "Invalid 2FA code")
     }
   };
 
