@@ -20,7 +20,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 const Login: React.FC = () => {
   const { login, isLoading, error, setError } = useAuth();
   const navigate = useNavigate();
-  
+
   const {
     register,
     handleSubmit,
@@ -43,8 +43,13 @@ const Login: React.FC = () => {
     try {
       await login(data.email, data.password);
       navigate('/dashboard');
-    } catch (err) {
-      // Error is handled in the auth context
+    } catch (err: any) {
+      if (err?.response?.code === 'TWO_FACTOR_REQUIRED') {
+        // Carry credentials forward (in-memory route state only - never
+        // persisted) so the 2FA screen can complete the login.
+        navigate('/two-factor', { state: { email: data.email, password: data.password } });
+      }
+      // Other errors are surfaced via the auth context's `error` state.
     }
   };
 
