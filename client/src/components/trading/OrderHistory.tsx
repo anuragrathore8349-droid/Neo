@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowUpRight, ArrowDownLeft, Download,
-  Search, ChevronDown, ChevronLeft, ChevronRight,
+  Search, ChevronDown, ChevronLeft, ChevronRight, Loader,
 } from 'lucide-react';
 import GlassCard from '../common/GlassCard';
 import { motion } from 'framer-motion';
@@ -27,25 +27,30 @@ interface OrderHistoryProps {
   orders: Order[];
   showCancelButton?: boolean;
   onCancelOrder?: (orderId: string) => Promise<void>;
+  cancellingId?: string | null;
 }
 
 const OrderHistory: React.FC<OrderHistoryProps> = ({
   orders,
   showCancelButton = false,
   onCancelOrder,
+  cancellingId: externalCancellingId,
 }) => {
   const [searchTerm,    setSearchTerm]    = useState('');
   const [statusFilter,  setStatusFilter]  = useState<string | null>(null);
   const [sideFilter,    setSideFilter]    = useState<string | null>(null);
-  const [cancellingId,  setCancellingId]  = useState<string | null>(null);
+  const [localCancellingId,  setLocalCancellingId]  = useState<string | null>(null);
   const [currentPage,   setCurrentPage]   = useState(1);
+  
+  // Use external cancellingId if provided, otherwise use local state
+  const cancellingId = externalCancellingId ?? localCancellingId;
   const ordersPerPage = 10;
 
   const handleCancel = async (orderId: string) => {
     if (!onCancelOrder) return;
-    setCancellingId(orderId);
+    setLocalCancellingId(orderId);
     try { await onCancelOrder(orderId); }
-    finally { setCancellingId(null); }
+    finally { setLocalCancellingId(null); }
   };
 
   const filteredOrders = orders.filter(order => {
@@ -234,7 +239,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
                           disabled={cancellingId === orderId}
                           className="px-2 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/40 transition-all disabled:opacity-50"
                         >
-                          {cancellingId === orderId ? '…' : 'Cancel'}
+                          {cancellingId === orderId ? <Loader size={12} className="animate-spin" /> : 'Cancel'}
                         </button>
                       )}
                     </td>
