@@ -1,212 +1,186 @@
-const { Server } = require('socket.io');
+// server/src/websockets/handlers/trading.handler.js
+'use strict';
 const WebSocket = require('ws');
 const { logger } = require('../../api/middlewares/logger.middleware');
 
 class TradingHandler {
   constructor(io) {
-    this.io = io;
-    this.rooms = new Map();
-    this.binanceStreams = new Map(); // Store active Binance WebSocket connections
+    this.io             = io;
+    this.socketRooms    = new Map();   // socketId -> Set<room>
+    this.symbolStreams   = new Map();   // symbol   -> { ws, subscribers: Set<socketId> }
     this.setupEventHandlers();
   }
 
   setupEventHandlers() {
     this.io.of('/trading').on('connection', (socket) => {
-      logger.info(`Client connected to trading websocket: ${socket.id}`);
+      logger.info(`[Trading WS] connected: ${socket.id}, user: ${socket.user?.userId}`);
 
-      socket.on('subscribe', (symbols) => {
-        this.handleSubscribe(socket, symbols);
+      // Join personal room for order updates
+      if (socket.user?.userId) {
+        socket.join(`user:${socket.user.userId}`);
+      }
+
+      // ── Subscribe to orderbook (camelCase — matches client) ───────────────
+      socket.on('subscribeOrderbook', ({ symbol } = {}) => {
+        if (!symbol) return;
+        this._joinOrderbookStream(socket, symbol.toUpperCase());
       });
 
-      socket.on('unsubscribe', (symbols) => {
-        this.handleUnsubscribe(socket, symbols);
+      socket.on('unsubscribeOrderbook', ({ symbol } = {}) => {
+        if (!symbol) return;
+        this._leaveOrderbookStream(socket, symbol.toUpperCase());
       });
 
-      socket.on('subscribe_orderbook', (symbol) => {
-        this.handleSubscribeOrderBook(socket, symbol);
+      // ── Legacy snake_case aliases ─────────────────────────────────────────
+      socket.on('subscribe_orderbook',   ({ symbol } = {}) => symbol && this._joinOrderbookStream(socket, symbol.toUpperCase()));
+      socket.on('unsubscribe_orderbook', ({ symbol } = {}) => symbol && this._leaveOrderbookStream(socket, symbol.toUpperCase()));
+
+      // ── Trade stream ──────────────────────────────────────────────────────
+      socket.on('subscribeTrades', ({ symbol } = {}) => {
+        if (!symbol) return;
+        const room = `trades:${symbol.toUpperCase()}`;
+        socket.join(room);
+        this._trackRoom(socket.id, room);
       });
 
-      socket.on('unsubscribe_orderbook', (symbol) => {
-        this.handleUnsubscribeOrderBook(socket, symbol);
+      socket.on('unsubscribeTrades', ({ symbol } = {}) => {
+        if (!symbol) return;
+        const room = `trades:${symbol.toUpperCase()}`;
+        socket.leave(room);
+        this._untrackRoom(socket.id, room);
       });
 
       socket.on('disconnect', () => {
-        this.handleDisconnect(socket);
+        this._handleDisconnect(socket);
       });
     });
   }
 
-  handleSubscribe(socket, symbols) {
-    if (!Array.isArray(symbols)) {
-      symbols = [symbols];
-    }
+  // ── Shared per-symbol Binance orderbook stream ────────────────────────────
+  _joinOrderbookStream(socket, symbol) {
+    const room = `orderbook:${symbol}`;
+    socket.join(room);
+    this._trackRoom(socket.id, room);
 
-    symbols.forEach(symbol => {
-      const orderBookRoom = `orderbook:${symbol}`;
-      const tradesRoom = `trades:${symbol}`;
-      
-      socket.join([orderBookRoom, tradesRoom]);
-      
-      if (!this.rooms.has(socket.id)) {
-        this.rooms.set(socket.id, new Set());
+    if (!this.symbolStreams.has(symbol)) {
+      this._openBinanceStream(symbol);
+    } else {
+      this.symbolStreams.get(symbol).subscribers.add(socket.id);
+    }
+    logger.info(`[Trading WS] ${socket.id} subscribed orderbook:${symbol}`);
+  }
+
+  _leaveOrderbookStream(socket, symbol) {
+    const room = `orderbook:${symbol}`;
+    socket.leave(room);
+    this._untrackRoom(socket.id, room);
+
+    const stream = this.symbolStreams.get(symbol);
+    if (stream) {
+      stream.subscribers.delete(socket.id);
+      if (stream.subscribers.size === 0) {
+        this._closeBinanceStream(symbol);
       }
-      this.rooms.get(socket.id).add(orderBookRoom);
-      this.rooms.get(socket.id).add(tradesRoom);
-
-      logger.info(`Client ${socket.id} subscribed to ${symbol} trading updates`);
-    });
+    }
   }
 
-  handleUnsubscribe(socket, symbols) {
-    if (!Array.isArray(symbols)) {
-      symbols = [symbols];
-    }
+  _openBinanceStream(symbol) {
+    const pair = `${symbol.toLowerCase()}usdt@depth20@100ms`;
+    const url  = `wss://stream.binance.com:9443/ws/${pair}`;
 
-    symbols.forEach(symbol => {
-      const orderBookRoom = `orderbook:${symbol}`;
-      const tradesRoom = `trades:${symbol}`;
-      
-      socket.leave([orderBookRoom, tradesRoom]);
-      
-      if (this.rooms.has(socket.id)) {
-        this.rooms.get(socket.id).delete(orderBookRoom);
-        this.rooms.get(socket.id).delete(tradesRoom);
-      }
+    let reconnectTimer = null;
+    const connect = () => {
+      const ws = new WebSocket(url);
 
-      logger.info(`Client ${socket.id} unsubscribed from ${symbol} trading updates`);
-    });
-  }
-
-  handleDisconnect(socket) {
-    if (this.rooms.has(socket.id)) {
-      this.rooms.delete(socket.id);
-    }
-    // Close any Binance WebSocket streams for this socket
-    if (this.binanceStreams.has(socket.id)) {
-      const streams = this.binanceStreams.get(socket.id);
-      streams.forEach(ws => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.close();
-        }
-      });
-      this.binanceStreams.delete(socket.id);
-    }
-    logger.info(`Client disconnected from trading websocket: ${socket.id}`);
-  }
-
-  handleSubscribeOrderBook(socket, symbol) {
-    try {
-      const pair = `${symbol.toLowerCase()}usdt@depth20@100ms`;
-      const binanceUrl = `wss://stream.binance.com:9443/ws/${pair}`;
-      
-      const ws = new WebSocket(binanceUrl);
-      
       ws.on('open', () => {
-        logger.info(`Binance WebSocket opened for ${symbol}: ${pair}`);
+        logger.info(`[Binance WS] opened: ${pair}`);
       });
 
-      ws.on('message', (data) => {
+      ws.on('message', (raw) => {
         try {
-          const parsed = JSON.parse(data.toString());
+          const parsed = JSON.parse(raw.toString());
           const orderBook = {
             symbol,
-            asks: (parsed.asks || []).map(([p, q]) => ({ 
-              price: parseFloat(p), 
-              quantity: parseFloat(q) 
-            })),
-            bids: (parsed.bids || []).map(([p, q]) => ({ 
-              price: parseFloat(p), 
-              quantity: parseFloat(q) 
-            })),
-            timestamp: new Date().toISOString()
+            bids: (parsed.bids || []).map(([p, q]) => ({ price: parseFloat(p), amount: parseFloat(q) })),
+            asks: (parsed.asks || []).map(([p, q]) => ({ price: parseFloat(p), amount: parseFloat(q) })),
+            timestamp: Date.now(),
           };
-          socket.emit('orderbook', orderBook);
-        } catch (err) {
-          logger.warn(`Failed to parse Binance message for ${symbol}:`, err.message);
+          this.io.of('/trading').to(`orderbook:${symbol}`).emit('orderbook', orderBook);
+        } catch { /* skip malformed */ }
+      });
+
+      ws.on('error', (err) => logger.warn(`[Binance WS] error ${symbol}: ${err.message}`));
+
+      ws.on('close', () => {
+        logger.warn(`[Binance WS] closed: ${pair}. Reconnecting in 3s…`);
+        if (this.symbolStreams.has(symbol)) {
+          reconnectTimer = setTimeout(connect, 3000);
+          this.symbolStreams.get(symbol).ws = null;
         }
       });
 
-      ws.on('error', (err) => {
-        logger.error(`Binance WebSocket error for ${symbol}:`, err.message);
-      });
-
-      ws.on('close', () => {
-        logger.info(`Binance WebSocket closed for ${symbol}`);
-      });
-
-      // Store WebSocket reference
-      if (!this.binanceStreams.has(socket.id)) {
-        this.binanceStreams.set(socket.id, new Set());
+      const entry = this.symbolStreams.get(symbol);
+      if (entry) {
+        entry.ws = ws;
+      } else {
+        this.symbolStreams.set(symbol, { ws, subscribers: new Set(), reconnectTimer });
       }
-      this.binanceStreams.get(socket.id).add(ws);
+    };
 
-      logger.info(`Client ${socket.id} subscribed to Binance orderbook for ${symbol}`);
-    } catch (err) {
-      logger.error(`Error subscribing to Binance orderbook:`, err.message);
-      socket.emit('error', { message: 'Failed to subscribe to orderbook' });
-    }
+    this.symbolStreams.set(symbol, { ws: null, subscribers: new Set(), reconnectTimer: null });
+    connect();
   }
 
-  handleUnsubscribeOrderBook(socket, symbol) {
-    try {
-      if (this.binanceStreams.has(socket.id)) {
-        const streams = this.binanceStreams.get(socket.id);
-        const pair = `${symbol.toLowerCase()}usdt@depth20@100ms`;
-        
-        // Close all WebSocket connections for this pair (simple approach)
-        streams.forEach(ws => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.close();
-          }
-        });
-        
-        this.binanceStreams.set(socket.id, new Set());
-      }
-      logger.info(`Client ${socket.id} unsubscribed from Binance orderbook for ${symbol}`);
-    } catch (err) {
-      logger.error(`Error unsubscribing from Binance orderbook:`, err.message);
-    }
+  _closeBinanceStream(symbol) {
+    const stream = this.symbolStreams.get(symbol);
+    if (!stream) return;
+    clearTimeout(stream.reconnectTimer);
+    if (stream.ws && stream.ws.readyState === WebSocket.OPEN) stream.ws.close();
+    this.symbolStreams.delete(symbol);
+    logger.info(`[Binance WS] closed stream for ${symbol} (no subscribers)`);
   }
 
-  // Broadcast order book updates
+  // ── Room tracking helpers ─────────────────────────────────────────────────
+  _trackRoom(socketId, room) {
+    if (!this.socketRooms.has(socketId)) this.socketRooms.set(socketId, new Set());
+    this.socketRooms.get(socketId).add(room);
+  }
+
+  _untrackRoom(socketId, room) {
+    this.socketRooms.get(socketId)?.delete(room);
+  }
+
+  _handleDisconnect(socket) {
+    this.socketRooms.delete(socket.id);
+    // Remove from all symbol stream subscriber sets
+    for (const [symbol, stream] of this.symbolStreams.entries()) {
+      stream.subscribers.delete(socket.id);
+      if (stream.subscribers.size === 0) this._closeBinanceStream(symbol);
+    }
+    logger.info(`[Trading WS] disconnected: ${socket.id}`);
+  }
+
+  // ── Public broadcast methods (used by trading.service.js) ─────────────────
   broadcastOrderBook(symbol, orderBook) {
-    const room = `orderbook:${symbol}`;
-    this.io.of('/trading').to(room).emit('orderbook', {
-      symbol,
-      data: orderBook
-    });
+    this.io.of('/trading').to(`orderbook:${symbol}`).emit('orderbook', orderBook);
   }
 
-  // Broadcast trade updates
   broadcastTrade(symbol, trade) {
-    const room = `trades:${symbol}`;
-    this.io.of('/trading').to(room).emit('trade', {
-      symbol,
-      data: trade
-    });
+    this.io.of('/trading').to(`trades:${symbol}`).emit('trade', { symbol, data: trade });
   }
 
-  // Broadcast order status updates
   broadcastOrderUpdate(userId, order) {
     this.io.of('/trading').to(`user:${userId}`).emit('orderUpdate', {
-      orderId: order.id,
-      status: order.status,
-      filledAmount: order.filledAmount,
+      orderId:         order._id || order.id,
+      status:          order.status,
+      filledAmount:    order.filledAmount,
       remainingAmount: order.remainingAmount,
-      averagePrice: order.averagePrice
+      averagePrice:    order.averageFilledPrice,
     });
   }
 
-  // Broadcast execution report
-  broadcastExecutionReport(userId, execution) {
-    this.io.of('/trading').to(`user:${userId}`).emit('execution', {
-      orderId: execution.orderId,
-      tradeId: execution.tradeId,
-      price: execution.price,
-      amount: execution.amount,
-      side: execution.side,
-      timestamp: execution.timestamp
-    });
+  broadcastOrderFill(userId, fill) {
+    this.io.of('/trading').to(`user:${userId}`).emit('orderFill', fill);
   }
 }
 
