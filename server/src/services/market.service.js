@@ -1304,10 +1304,10 @@ const cryptoSymbols = symbols.filter(symbol => {
       const alert = new MarketAlert({
         userId,
         symbol: alertData.symbol.toUpperCase(),
-        type: alertData.type,
-        price: alertData.price,
+        condition: alertData.type,
+        targetPrice: alertData.price,
         notificationTypes: alertData.notificationTypes || ['email'],
-        isTriggered: false,
+        active: true,
       });
       await alert.save();
       return alert;
@@ -1319,7 +1319,7 @@ const cryptoSymbols = symbols.filter(symbol => {
 
   async getPriceAlerts(userId) {
     try {
-      return await MarketAlert.find({ userId, isTriggered: false })
+      return await MarketAlert.find({ userId, active: true, triggered: false })
         .sort({ createdAt: -1 });
     } catch (error) {
       logger.error('Error fetching price alerts:', error);
