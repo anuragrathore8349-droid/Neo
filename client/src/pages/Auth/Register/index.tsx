@@ -56,7 +56,7 @@ const Register: React.FC = () => {
     try {
       await registerUser(data.email, data.password, data.name);
       console.log('Register API call succeeded');
-      navigate('/verify-email');
+      navigate('/verify-email', { state: { email: data.email } });
     } catch (err) {
       console.error('Register API call failed', err);
       // Error is handled in the auth context
