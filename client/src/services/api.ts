@@ -3,9 +3,23 @@ export type ApiOptions = Omit<RequestInit, 'body'> & {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3003';
+const AUTH_STORAGE_KEY = 'neofin_auth';
 
 let isRefreshing = false;
 let refreshPromise: Promise<string | null> | null = null;
+
+function getStoredAuth(): { accessToken?: string; refreshToken?: string; user?: unknown } | null {
+  try {
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
 
 async function refreshAccessToken(): Promise<string | null> {
   if (isRefreshing && refreshPromise) {
@@ -25,27 +39,29 @@ async function refreshAccessToken(): Promise<string | null> {
       });
 
       const data = response.ok ? await response.json() : null;
-      
+
       if (response.ok && data?.data?.accessToken) {
         const newToken = data.data.accessToken;
-        
-        // Update stored token
-        const stored = localStorage.getItem('neofin_auth');
-        if (stored) {
-          const auth = JSON.parse(stored);
+
+        // Update stored token, preserving the rest of the auth object (user, etc.)
+        const auth = getStoredAuth();
+        if (auth) {
           auth.accessToken = newToken;
-          localStorage.setItem('neofin_auth', JSON.stringify(auth));
+          if (data.data.refreshToken) {
+            auth.refreshToken = data.data.refreshToken;
+          }
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
         }
-        
+
         return newToken;
       }
-      
-      // Clear auth if refresh fails
-      localStorage.removeItem('neofin_auth');
+
+      // Refresh token is invalid/expired - clear the stale session
+      clearStoredAuth();
       return null;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      localStorage.removeItem('neofin_auth');
+      clearStoredAuth();
       return null;
     } finally {
       isRefreshing = false;
@@ -58,25 +74,10 @@ async function refreshAccessToken(): Promise<string | null> {
 
 export async function apiFetch<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   const { body, headers, ...rest } = options;
-  console.log('apiFetch START ->', { 
-    url: `${API_BASE_URL}${path}`, 
-    method: options.method || 'GET',
-    body,
-    bodyType: typeof body,
-    bodyContent: body ? JSON.stringify(body) : 'undefined'
-  });
 
-  // Get access token from localStorage if available
   const getAccessToken = () => {
     if (typeof window === 'undefined') return null;
-    const stored = localStorage.getItem('neofin_auth');
-    if (!stored) return null;
-    try {
-      const auth = JSON.parse(stored);
-      return auth.accessToken || null;
-    } catch {
-      return null;
-    }
+    return getStoredAuth()?.accessToken || null;
   };
 
   let accessToken = getAccessToken();
@@ -96,37 +97,26 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
   };
 
   let response = await makeRequest(accessToken);
-  
-  // If 401, try to refresh token once
+
+  // If 401, try to refresh the token once and retry the original request
   if (response.status === 401 && accessToken) {
-    console.log('Received 401, attempting to refresh token...');
     const newToken = await refreshAccessToken();
-    
+
     if (newToken) {
-      console.log('Token refreshed successfully, retrying request...');
       accessToken = newToken;
       response = await makeRequest(newToken);
-    } else {
-      console.log('Token refresh failed, proceeding with 401 error');
     }
+    // If refresh failed, fall through and let the original 401 response
+    // surface as an error below - callers (or ProtectedRoute on next
+    // render) are responsible for redirecting to /login.
   }
 
   const text = await response.text();
-  let data = null;
-  
+  let data: any = null;
+
   try {
     data = text ? JSON.parse(text) : null;
   } catch (parseError) {
-    // Response is not valid JSON - likely HTML error page or server error
-    console.error('Failed to parse response as JSON:', {
-      url: `${API_BASE_URL}${path}`,
-      status: response.status,
-      responseFirstChars: text?.substring(0, 100),
-      isHtml: text?.startsWith('<!'),
-      parseError: (parseError as Error).message
-    });
-    
-    // If HTML response, provide helpful error message
     if (text?.startsWith('<!')) {
       const error = new Error(
         `Server returned HTML instead of JSON (HTTP ${response.status}). ` +
@@ -138,11 +128,8 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
       fetchError.response = { error: 'Invalid response format - HTML received' };
       throw fetchError;
     }
-    
-    // For other JSON parse errors
-    const error = new Error(
-      `Invalid JSON response: ${(parseError as Error).message}`
-    );
+
+    const error = new Error(`Invalid JSON response: ${(parseError as Error).message}`);
     const fetchError = error as Error & { status?: number; response?: unknown };
     fetchError.status = response.status;
     fetchError.response = { error: 'Invalid response format' };
@@ -151,8 +138,7 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
 
   if (!response.ok) {
     let message = data?.message || data?.error || `${response.status} ${response.statusText}`;
-    
-    // Format validation errors - handle both array and object formats
+
     if (data?.errors) {
       let errorDetails = '';
       if (Array.isArray(data.errors)) {
@@ -160,7 +146,6 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
           .map((err: any) => `${err.field || 'field'}: ${err.message}`)
           .join(', ');
       } else if (typeof data.errors === 'object') {
-        // Handle object format (e.g., {field: {message: ...}})
         errorDetails = Object.entries(data.errors)
           .map(([field, err]: [string, any]) => {
             if (typeof err === 'object' && err.message) {
@@ -170,30 +155,18 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
           })
           .join(', ');
       }
-      
+
       if (errorDetails) {
         message = `${message} (${errorDetails})`;
       }
     }
-    
+
     const error = new Error(message);
     const fetchError = error as Error & { status?: number; response?: unknown };
     fetchError.status = response.status;
     fetchError.response = data;
-    console.error('apiFetch FAILED ->', { 
-      url: `${API_BASE_URL}${path}`, 
-      method: options.method || 'GET',
-      status: response.status, 
-      body,
-      responseMessage: data?.message,
-      responseErrors: data?.errors,
-      responseDebug: data?.debug,
-      formattedMessage: message,
-      fullResponse: data
-    });
     throw fetchError;
   }
 
-  console.log('apiFetch success ->', { url: `${API_BASE_URL}${path}`, status: response.status, data });
-  return data;
+  return data as T;
 }
