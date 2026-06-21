@@ -1,24 +1,24 @@
-const Joi = require('joi');
+const { z } = require('zod');
 
 const portfolioSchemas = {
-  addAsset: {
-    body: Joi.object({
-      symbol:       Joi.string().uppercase().min(1).max(20).required(),
-      name:         Joi.string().max(100).optional(),
-      type:         Joi.string().valid('crypto', 'stock', 'forex', 'commodity').default('crypto'),
-      amount:       Joi.number().positive().required(),
-      costBasis:    Joi.number().positive().required(),
-      purchaseDate: Joi.date().iso().optional(),
+  addAsset: z.object({
+    body: z.object({
+      symbol:       z.string().min(1).max(20),
+      name:         z.string().max(100).optional(),
+      type:         z.enum(['crypto', 'stock', 'forex', 'commodity']).default('crypto'),
+      amount:       z.number().positive(),
+      costBasis:    z.number().positive(),
+      purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'Date must be in YYYY-MM-DD format').optional(),
     }),
-  },
-  updateAsset: {
-    body: Joi.object({
-      amount:       Joi.number().positive().optional(),
-      costBasis:    Joi.number().positive().optional(),
-      purchaseDate: Joi.date().iso().optional(),
+  }),
+  updateAsset: z.object({
+    body: z.object({
+      amount:       z.number().positive().optional(),
+      costBasis:    z.number().positive().optional(),
+      purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'Date must be in YYYY-MM-DD format').optional(),
     }),
-    params: Joi.object({ id: Joi.string().required() }),
-  },
+    params: z.object({ id: z.string() }),
+  }),
 };
 
 module.exports = { portfolioSchemas };
