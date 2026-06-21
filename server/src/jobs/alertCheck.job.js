@@ -1,7 +1,10 @@
 // server/src/jobs/alertCheck.job.js
 const MarketAlert = require('../models/market-alert.model');
+const User = require('../models/user.model');
 const marketService = require('../services/market.service');
 const notificationService = require('../services/notification.service');
+const emailService = require('../services/email.service');
+const config = require('../config');
 const { logger } = require('../api/middlewares/logger.middleware');
 
 /**
@@ -12,7 +15,12 @@ async function checkPriceAlerts() {
   try {
     // Get all active (un-triggered) alerts
     const alerts = await MarketAlert.find({ triggered: false, active: true }).lean();
-    if (!alerts || alerts.length === 0) return;
+    if (!alerts || alerts.length === 0) {
+      logger.debug('No active price alerts to check');
+      return;
+    }
+
+    logger.info(`🔔 Checking ${alerts.length} price alert(s)...`);
 
     // Collect unique symbols
     const symbols = [...new Set(alerts.map(a => a.symbol))];
@@ -38,21 +46,50 @@ async function checkPriceAlerts() {
       if (shouldTrigger) {
         triggeredIds.push(alert._id);
 
-        // Send notification to user
+        // Fetch user to get email
+        const user = await User.findById(alert.userId).select('email firstName lastName').lean();
+        if (!user) continue;
+
+        // Create in-app notification
         try {
-          await notificationService.createNotification(alert.userId, {
-            type: 'price_alert',
+          const notification = await notificationService.createNotification(alert.userId, {
+            type: 'alert',
             title: `Price Alert: ${alert.symbol}`,
             message: `${alert.symbol} is now ${alert.condition} $${alert.targetPrice.toLocaleString()}. Current price: $${currentPrice.toLocaleString()}`,
-            data: {
+            severity: alert.condition === 'above' ? 'success' : 'warning',
+            icon: 'Bell',
+            metadata: {
               symbol: alert.symbol,
               targetPrice: alert.targetPrice,
               currentPrice,
               condition: alert.condition,
             },
           });
+          logger.info(`✅ Notification created for user ${alert.userId}:`, notification._id);
         } catch (notifErr) {
-          logger.error(`Failed to send price alert notification for ${alert.symbol}:`, notifErr.message);
+          logger.error(`Failed to create in-app notification for ${alert.symbol}:`, notifErr.message);
+        }
+
+        // Send email if enabled
+        if (alert.notificationTypes && alert.notificationTypes.includes('email')) {
+          try {
+            await emailService.sendEmail({
+              to: user.email,
+              subject: `🔔 Price Alert: ${alert.symbol}`,
+              template: 'priceAlert',
+              context: {
+                name: user.firstName,
+                symbol: alert.symbol,
+                condition: alert.condition,
+                targetPrice: alert.targetPrice.toLocaleString(),
+                currentPrice: currentPrice.toLocaleString(),
+                actionUrl: `${config.appUrl}/trading?symbol=${alert.symbol}`,
+              },
+            });
+            logger.info(`✅ Price alert email sent to ${user.email} for ${alert.symbol}`);
+          } catch (emailErr) {
+            logger.error(`Failed to send email for ${alert.symbol} to ${user.email}:`, emailErr.message);
+          }
         }
       }
     }
