@@ -31,14 +31,64 @@ class PaymentService {
   }
 
   /**
-   * Create a Stripe Checkout Session for a plan upgrade
+   * Select/activate the free plan (no Stripe involved).
+   * Used for the $0 "Basic" plan which has no stripePriceId.
+   */
+  async selectFreePlan(userId) {
+    const plan = getPlanById('basic');
+
+    await Subscription.findOneAndUpdate(
+      { userId },
+      {
+        userId,
+        planId: 'basic',
+        planName: plan.name,
+        price: plan.price,
+        billingCycle: 'monthly',
+        status: 'active',
+        startDate: new Date(),
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        features: {
+          maxTransactions: typeof plan.features.maxTransactions === 'number' ? plan.features.maxTransactions : 0,
+          advancedAnalytics: !!plan.features.advancedAnalytics,
+          realTimeData: !!plan.features.realTimeData,
+          aiInsights: !!plan.features.aiInsights,
+          defiIntegration: !!plan.features.defiIntegration,
+          customIntegrations: !!plan.features.customIntegrations,
+          dedicatedSupport: !!plan.features.dedicatedSupport,
+          apiAccess: !!plan.features.apiAccess,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await User.findByIdAndUpdate(userId, {
+      plan: 'basic',
+      'subscription.status': 'active',
+      'subscription.features': plan.features,
+    });
+
+    return { planId: 'basic', status: 'active' };
+  }
+
+  /**
+   * Create a Stripe Checkout Session for a plan upgrade.
+   * For the free plan, this short-circuits to selectFreePlan() instead
+   * since there's nothing to charge and no Stripe price exists for it.
    */
   async createCheckoutSession(userId, planId, successUrl, cancelUrl) {
-    if (!stripe) throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY.');
-
     const plan = getPlanById(planId);
-    if (!plan) throw new Error(`Unknown plan: ${planId}`);
-    if (!plan.stripePriceId) throw new Error(`Plan "${planId}" has no Stripe price ID.`);
+    if (!plan) throw httpError(`Unknown plan: ${planId}`, 400);
+
+    // Free plan: activate immediately, no Stripe checkout needed.
+    if (!plan.stripePriceId || plan.price === 0) {
+      const result = await this.selectFreePlan(userId);
+      return { free: true, ...result };
+    }
+
+    if (!stripe) throw httpError('Stripe is not configured. Set STRIPE_SECRET_KEY.', 503);
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -56,12 +106,23 @@ class PaymentService {
    * Cancel a user's active Stripe subscription at period end
    */
   async cancelSubscription(userId) {
-    if (!stripe) throw new Error('Stripe is not configured.');
-
     const subscription = await Subscription.findOne({ userId, status: 'active' });
-    if (!subscription?.stripeSubscriptionId) {
-      throw new Error('No active subscription found.');
+
+    if (!subscription) {
+      throw httpError('No active subscription found.', 404);
     }
+
+    // Free plan subscriptions have no Stripe subscription to cancel -
+    // just mark them cancelled and drop the user back to basic.
+    if (!subscription.stripeSubscriptionId) {
+      subscription.status = 'cancelled';
+      subscription.cancelledAt = new Date();
+      await subscription.save();
+      await User.findByIdAndUpdate(userId, { plan: 'basic' });
+      return { message: 'Subscription cancelled', cancelAt: new Date() };
+    }
+
+    if (!stripe) throw httpError('Stripe is not configured.', 503);
 
     const updated = await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
       cancel_at_period_end: true,
@@ -78,10 +139,10 @@ class PaymentService {
    * Update default payment method on Stripe customer
    */
   async updatePaymentMethod(userId, paymentMethodId) {
-    if (!stripe) throw new Error('Stripe is not configured.');
+    if (!stripe) throw httpError('Stripe is not configured.', 503);
 
     const subscription = await Subscription.findOne({ userId });
-    if (!subscription?.stripeCustomerId) throw new Error('No Stripe customer found.');
+    if (!subscription?.stripeCustomerId) throw httpError('No Stripe customer found.', 404);
 
     await stripe.customers.update(subscription.stripeCustomerId, {
       invoice_settings: { default_payment_method: paymentMethodId },
@@ -98,7 +159,7 @@ class PaymentService {
    * Get billing history (invoices) from Stripe
    */
   async getBillingHistory(userId) {
-    if (!stripe) throw new Error('Stripe is not configured.');
+    if (!stripe) return [];
 
     const subscription = await Subscription.findOne({ userId });
     if (!subscription?.stripeCustomerId) return [];
@@ -125,17 +186,17 @@ class PaymentService {
    * @param {string} signature - stripe-signature header
    */
   async handleWebhook(rawBody, signature) {
-    if (!stripe) throw new Error('Stripe is not configured.');
+    if (!stripe) throw httpError('Stripe is not configured.', 503);
 
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!webhookSecret) throw new Error('STRIPE_WEBHOOK_SECRET is not set.');
+    if (!webhookSecret) throw httpError('STRIPE_WEBHOOK_SECRET is not set.', 503);
 
     let event;
     try {
       event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
     } catch (err) {
       logger.error('Stripe webhook signature verification failed:', err.message);
-      throw new Error(`Webhook signature invalid: ${err.message}`);
+      throw httpError(`Webhook signature invalid: ${err.message}`, 400);
     }
 
     logger.info(`Stripe webhook received: ${event.type}`);
@@ -172,11 +233,11 @@ class PaymentService {
    * Create a Stripe Billing Portal session
    */
   async createPortalSession(userId, returnUrl) {
-    if (!stripe) throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY.');
+    if (!stripe) throw httpError('Stripe is not configured. Set STRIPE_SECRET_KEY.', 503);
 
     const subscription = await Subscription.findOne({ userId });
     if (!subscription?.stripeCustomerId) {
-      throw new Error('No Stripe customer found for this user.');
+      throw httpError('No Stripe customer found for this user.', 404);
     }
 
     const session = await stripe.billingPortal.sessions.create({
@@ -202,14 +263,28 @@ class PaymentService {
       {
         userId,
         planId,
+        planName: plan.name,
+        price: plan.price,
+        billingCycle: 'monthly',
         stripeCustomerId: session.customer,
         stripeSubscriptionId: session.subscription,
         status: 'active',
+        startDate: new Date(),
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         cancelAtPeriodEnd: false,
+        features: {
+          maxTransactions: typeof plan.features.maxTransactions === 'number' ? plan.features.maxTransactions : 0,
+          advancedAnalytics: !!plan.features.advancedAnalytics,
+          realTimeData: !!plan.features.realTimeData,
+          aiInsights: !!plan.features.aiInsights,
+          defiIntegration: !!plan.features.defiIntegration,
+          customIntegrations: !!plan.features.customIntegrations,
+          dedicatedSupport: !!plan.features.dedicatedSupport,
+          apiAccess: !!plan.features.apiAccess,
+        },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     // Update user's plan
@@ -263,6 +338,12 @@ class PaymentService {
     }
     logger.info(`Subscription cancelled: ${stripeSub.id}`);
   }
+}
+
+function httpError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
 }
 
 module.exports = new PaymentService();
