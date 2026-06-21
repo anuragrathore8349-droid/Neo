@@ -103,11 +103,18 @@ const formatDate = (dateString: string | Date | number | null | undefined): stri
 };  // Custom tooltip for charts
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      const data = payload[0].payload;
       return (
         <div className="bg-dark-800 p-3 rounded-lg border border-dark-700 shadow-lg">
-          <p className="font-medium">{label}</p>
-          <p className="text-primary">Price: {formatCurrency(payload[0].payload.price)}</p>
-          <p className="text-secondary">Value: {formatCurrency(payload[0].payload.value)}</p>
+          <p className="font-medium text-white">{label || 'Asset Price'}</p>
+          <p className="text-primary">
+            Price: {formatCurrency(data?.price ?? data?.value)}
+          </p>
+          {data?.value && data.value !== data.price && (
+            <p className="text-secondary text-sm">
+              Holdings Value: {formatCurrency(data.value)}
+            </p>
+          )}
         </div>
       );
     }
