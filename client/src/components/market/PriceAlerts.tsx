@@ -73,7 +73,7 @@ export function PriceAlerts() {
   const handleDeleteAlert = async (alertId: string) => {
     try {
       await deletePriceAlert(alertId);
-      setAlerts(alerts.filter(a => a.id !== alertId));
+      setAlerts(alerts.filter(a => a._id !== alertId));
       setError(null);
     } catch (err) {
       console.error('Failed to delete alert:', err);
@@ -181,21 +181,21 @@ export function PriceAlerts() {
       ) : (
         <div className={styles.alertsList}>
           {alerts.map((alert) => (
-            <div key={alert.id} className={styles.alertItem}>
+            <div key={alert._id} className={styles.alertItem}>
               <div className={styles.alertContent}>
                 <div className={styles.alertSymbol}>{alert.symbol}</div>
                 <div className={styles.alertDetails}>
                   <span className={styles.alertType}>
-                    {alert.type === 'above' ? '↑' : '↓'} ${alert.price}
+                    {alert.condition === 'above' ? '↑' : '↓'} ${alert.targetPrice}
                   </span>
-                  {alert.isTriggered && (
+                  {alert.triggered && (
                     <span className={styles.triggered}>Triggered</span>
                   )}
                 </div>
               </div>
               <button
                 className={styles.deleteButton}
-                onClick={() => handleDeleteAlert(alert.id)}
+                onClick={() => handleDeleteAlert(alert._id)}
                 title="Delete alert"
               >
                 ✕
