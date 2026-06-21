@@ -217,7 +217,7 @@ const PriceAlerts: React.FC<PriceAlertsProps> = ({ assets }) => {
             const asset = assets.find(a => a.symbol === alert.symbol);
             const currentP = asset?.price ?? 0;
             const diff = currentP > 0
-              ? ((alert.price - currentP) / currentP * 100).toFixed(2)
+              ? ((alert.targetPrice - currentP) / currentP * 100).toFixed(2)
               : null;
 
             return (
@@ -226,18 +226,18 @@ const PriceAlerts: React.FC<PriceAlertsProps> = ({ assets }) => {
                 className="flex items-center justify-between p-4 bg-dark-800/50 rounded-lg border border-dark-700"
               >
                 <div className="flex items-center gap-4">
-                  <div className={`p-2 rounded-lg ${alert.type === 'above' ? 'bg-secondary/20' : 'bg-red-500/20'}`}>
-                    <Bell size={16} className={alert.type === 'above' ? 'text-secondary' : 'text-red-400'} />
+                  <div className={`p-2 rounded-lg ${alert.condition === 'above' ? 'bg-secondary/20' : 'bg-red-500/20'}`}>
+                    <Bell size={16} className={alert.condition === 'above' ? 'text-secondary' : 'text-red-400'} />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-semibold">{alert.symbol}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${alert.type === 'above' ? 'bg-secondary/20 text-secondary' : 'bg-red-500/20 text-red-400'}`}>
-                        {alert.type === 'above' ? '↑ Above' : '↓ Below'}
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${alert.condition === 'above' ? 'bg-secondary/20 text-secondary' : 'bg-red-500/20 text-red-400'}`}>
+                        {alert.condition === 'above' ? '↑ Above' : '↓ Below'}
                       </span>
                     </div>
                     <div className="text-sm text-dark-400 mt-0.5">
-                      Target: <span className="text-light font-medium">${alert.price.toLocaleString()}</span>
+                      Target: <span className="text-light font-medium">${alert.targetPrice.toLocaleString()}</span>
                       {currentP > 0 && diff !== null && (
                         <span className="ml-2 text-xs">
                           ({parseFloat(diff) >= 0 ? '+' : ''}{diff}% away)
