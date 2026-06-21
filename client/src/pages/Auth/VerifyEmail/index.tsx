@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useSearchParams, useNavigate, useParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Mail, CheckCircle, ArrowRight } from 'lucide-react';
 import { toast } from 'react-toastify';
 import AuthLayout from '../../../components/common/AuthLayout';
@@ -12,13 +12,22 @@ const VerifyEmail: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { token: tokenParam } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const token = tokenParam || searchParams.get('token');
   const [verificationStatus, setVerificationStatus] = useState<'pending' | 'success' | 'error'>('pending');
+  const [isResending, setIsResending] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState<string>('');
 
   useEffect(() => {
     // Clear any existing errors when component mounts
     setError(null);
-    
+
+    // The Register page passes the just-registered email through route
+    // state so we can show it / use it for "resend" even before any
+    // verification token exists.
+    const stateEmail = (location.state as { email?: string } | undefined)?.email;
+    if (stateEmail) setPendingEmail(stateEmail);
+
     // If there's a token, verify it
     if (token) {
       const verify = async () => {
@@ -29,7 +38,7 @@ const VerifyEmail: React.FC = () => {
           setVerificationStatus('error');
         }
       };
-      
+
       verify();
     }
   }, [token, verifyEmail, setError]);
@@ -44,6 +53,23 @@ const VerifyEmail: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [user, verificationStatus, navigate]);
+
+  const handleResend = async () => {
+    const email = user?.email || pendingEmail;
+    if (!email) {
+      toast.error('Please enter your email on the registration page first');
+      return;
+    }
+    setIsResending(true);
+    try {
+      await authService.resendVerification(email);
+      toast.success('Verification email sent! Please check your inbox.');
+    } catch {
+      toast.error('Failed to send verification email. Please try again.');
+    } finally {
+      setIsResending(false);
+    }
+  };
 
   if (token) {
     return (
@@ -105,13 +131,22 @@ const VerifyEmail: React.FC = () => {
               <p className="text-dark-300 mb-6">
                 {error || 'The verification link is invalid or has expired. Please request a new verification link.'}
               </p>
-              
-              <Button
-                variant="primary"
-                onClick={() => navigate('/login')}
-              >
-                Back to Login
-              </Button>
+
+              <div className="flex flex-col items-center gap-3">
+                <Button
+                  variant="primary"
+                  onClick={handleResend}
+                  isLoading={isResending}
+                >
+                  Resend Verification Email
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate('/login')}
+                >
+                  Back to Login
+                </Button>
+              </div>
             </>
           )}
           
@@ -139,7 +174,7 @@ const VerifyEmail: React.FC = () => {
         </div>
         
         <p className="text-dark-300 mb-6">
-          We've sent a verification link to <span className="text-white font-medium">{user?.email || 'your email'}</span>. 
+          We've sent a verification link to <span className="text-white font-medium">{user?.email || pendingEmail || 'your email'}</span>.
           Please check your inbox and click the link to verify your account.
         </p>
         
@@ -149,15 +184,8 @@ const VerifyEmail: React.FC = () => {
         
         <Button
           variant="outline"
-          onClick={async () => {
-            try {
-              await authService.forgotPassword(user?.email || '');
-              toast.success('Verification email sent!');
-            } catch {
-              toast.error('Failed to send email');
-            }
-          }}
-          isLoading={isLoading}
+          onClick={handleResend}
+          isLoading={isResending || isLoading}
         >
           Resend Verification Email
         </Button>
