@@ -378,19 +378,24 @@ class WalletService {
 async verifyWalletOwnership(address, signature) {
   try {
     const normalizedAddress = ethers.utils.getAddress(address);
-
-    const message = `Connect wallet ${normalizedAddress} to NeoFin`;
+    
+    // Must match the exact message format signed on the client
+    const message = `Connect wallet ${address} to NeoFin`;
 
     logger.debug(`Verifying wallet ownership for: ${normalizedAddress}`);
+    logger.debug(`Message: "${message}"`);
+    logger.debug(`Signature: ${signature?.substring(0, 20)}...`);
 
     const signerAddress = ethers.utils.verifyMessage(message, signature);
 
+    logger.debug(`Recovered signer address: ${signerAddress}`);
+
     if (signerAddress.toLowerCase() !== normalizedAddress.toLowerCase()) {
       logger.warn(`Address mismatch: expected=${normalizedAddress.toLowerCase()}, received=${signerAddress.toLowerCase()}`);
-      throw new Error('Invalid signature');
+      throw new Error('Signature does not match wallet address');
     }
 
-    logger.info(`Wallet ownership verified: ${normalizedAddress}`);
+    logger.info(`✓ Wallet ownership verified: ${normalizedAddress}`);
     return true;
 
   } catch (error) {
