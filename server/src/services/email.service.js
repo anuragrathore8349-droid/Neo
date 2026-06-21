@@ -59,6 +59,24 @@ class EmailService {
         <a href="${context.resetUrl}">Reset Password</a>
         <p>This link will expire in 1 hour.</p>
         <p>If you didn't request this, please ignore this email.</p>
+      `,
+      priceAlert: (context) => `
+        <h1>🔔 Price Alert: ${context.symbol}</h1>
+        <p>Hello ${context.name},</p>
+        <p>Your price alert for <strong>${context.symbol}</strong> has been triggered!</p>
+        <div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; margin: 16px 0;">
+          <p style="margin: 8px 0;"><strong>Condition:</strong> Price ${context.condition}</p>
+          <p style="margin: 8px 0;"><strong>Target Price:</strong> $${context.targetPrice}</p>
+          <p style="margin: 8px 0;"><strong>Current Price:</strong> $${context.currentPrice}</p>
+        </div>
+        <p>
+          <a href="${context.actionUrl}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px;">
+            View Trading Page
+          </a>
+        </p>
+        <p style="color: #6b7280; font-size: 12px; margin-top: 20px;">
+          You received this email because you enabled email notifications for price alerts in your NeoFin account settings.
+        </p>
       `
     };
 
