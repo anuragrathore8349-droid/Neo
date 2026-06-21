@@ -8,11 +8,20 @@ const config = require('../config');
 const ms = require('ms');
 const { logger } = require('../api/middlewares/logger.middleware');
 
+// Helper to create an error with an explicit HTTP status code so the
+// error middleware returns the right status instead of defaulting to 500.
+function httpError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  if (code) error.code = code;
+  return error;
+}
+
 class AuthService {
   async register(userData) {
     const existingUser = await User.findOne({ email: userData.email });
     if (existingUser) {
-      throw new Error('Email already registered');
+      throw httpError('Email already registered', 409);
     }
 
     const verificationToken = cryptoRandomString({ length: 32, type: 'url-safe' });
@@ -27,8 +36,44 @@ class AuthService {
     await user.save();
     logger.info('User saved to database', { userId: user._id, email: user.email });
 
-    // Send verification email
-    logger.debug('Sending verification email', { email: user.email });
+    // Send verification email (non-blocking failure - registration still succeeds)
+    try {
+      logger.debug('Sending verification email', { email: user.email });
+      await emailService.sendEmail({
+        to: user.email,
+        subject: 'Verify your email',
+        template: 'emailVerification',
+        context: {
+          name: user.firstName,
+          verificationUrl: `${config.appUrl}/verify-email/${verificationToken}`
+        }
+      });
+      logger.info('Verification email sent successfully', { email: user.email });
+    } catch (err) {
+      logger.error('Failed to send verification email', { email: user.email, error: err.message });
+    }
+
+    return {
+      userId: user._id,
+      email: user.email
+    };
+  }
+
+  async resendVerificationEmail(email) {
+    const user = await User.findOne({ email });
+    // Don't reveal whether the account exists
+    if (!user) return;
+    if (user.isEmailVerified) return;
+
+    const verificationToken = cryptoRandomString({ length: 32, type: 'url-safe' });
+
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: new Date(Date.now() + ms('24h'))
+      }
+    });
+
     await emailService.sendEmail({
       to: user.email,
       subject: 'Verify your email',
@@ -38,40 +83,38 @@ class AuthService {
         verificationUrl: `${config.appUrl}/verify-email/${verificationToken}`
       }
     });
-    logger.info('Verification email sent successfully', { email: user.email });
-
-    return { userId: user._id };
   }
 
   async login(email, password, twoFactorCode = null) {
     const user = await User.findOne({ email });
     if (!user) {
-      throw new Error('Invalid credentials');
+      throw httpError('Invalid credentials', 401);
     }
 
     if (user.isLocked()) {
-      throw new Error('Account is locked. Try again later');
+      throw httpError('Account is locked. Try again later', 423);
     }
 
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       await user.incrementLoginAttempts();
-      throw new Error('Invalid credentials');
+      throw httpError('Invalid credentials', 401);
     }
 
     if (user.isTwoFactorEnabled) {
       if (!twoFactorCode) {
-        throw new Error('2FA code required');
+        throw httpError('2FA code required', 401, 'TWO_FACTOR_REQUIRED');
       }
 
       const isValid = speakeasy.totp.verify({
         secret: user.twoFactorSecret,
         encoding: 'base32',
-        token: twoFactorCode
+        token: twoFactorCode,
+        window: 1
       });
 
       if (!isValid) {
-        throw new Error('Invalid 2FA code');
+        throw httpError('Invalid 2FA code', 401);
       }
     }
 
@@ -87,7 +130,7 @@ class AuthService {
       userAgent: 'unknown', // Will be updated by controller if request object available
       timestamp: new Date(),
     };
-    
+
     await User.findByIdAndUpdate(user._id, {
       $set: {
         failedLoginAttempts: 0,
@@ -122,6 +165,8 @@ class AuthService {
         avatar: user.avatar,
         bio: user.bio,
         plan: user.plan,
+        isEmailVerified: user.isEmailVerified,
+        isTwoFactorEnabled: user.isTwoFactorEnabled,
         preferences: user.preferences
       }
     };
@@ -129,9 +174,7 @@ class AuthService {
 
   async refreshToken(refreshToken) {
     if (!refreshToken) {
-      const error = new Error('Refresh token is required');
-      error.status = 400;
-      throw error;
+      throw httpError('Refresh token is required', 400);
     }
 
     // First, find the user and validate the refresh token atomically
@@ -147,9 +190,7 @@ class AuthService {
     );
 
     if (!user) {
-      const error = new Error('Invalid or expired refresh token');
-      error.status = 401;
-      throw error;
+      throw httpError('Invalid or expired refresh token', 401);
     }
 
     // Generate new tokens
@@ -173,6 +214,7 @@ class AuthService {
   }
 
   async logout(refreshToken) {
+    if (!refreshToken) return;
     await User.findOneAndUpdate(
       { 'refreshTokens.token': refreshToken },
       { $pull: { refreshTokens: { token: refreshToken } } }
@@ -202,31 +244,33 @@ class AuthService {
       template: 'passwordReset',
       context: {
         name: user.firstName,
-        resetUrl: `${config.appUrl}/reset-password/${resetToken}`
+        resetUrl: `${config.appUrl}/reset-password?token=${resetToken}`
       }
     });
   }
 
   async resetPassword(token, newPassword) {
-    const user = await User.findOneAndUpdate(
-      {
-        resetPasswordToken: token,
-        resetPasswordExpires: { $gt: new Date() }
-      },
-      {
-        $set: {
-          password: newPassword,
-          refreshTokens: [],  // ✅ clear the array properly
-          resetPasswordToken: undefined,
-          resetPasswordExpires: undefined
-        }
-      },
-      { new: true }
-    );
+    // IMPORTANT: load the document and call .save() so the
+    // pre('save') bcrypt hashing hook actually runs. Using
+    // findOneAndUpdate() here would write the plaintext password
+    // directly to the database and lock the user out permanently.
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: new Date() }
+    });
 
     if (!user) {
-      throw new Error('Invalid or expired reset token');
+      throw httpError('Invalid or expired reset token', 400);
     }
+
+    user.password = newPassword; // triggers pre('save') hashing
+    user.refreshTokens = [];     // log out all sessions on password reset
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+
+    await user.save();
   }
 
   async verifyEmail(token) {
@@ -248,21 +292,21 @@ class AuthService {
     );
 
     if (!user) {
-      throw new Error('Invalid or expired verification token');
+      throw httpError('Invalid or expired verification token', 400);
     }
 
     return user;
   }
 
   async setup2FA(userId) {
-    // ✅ Fetch user FIRST
+    // Fetch user first
     const user = await User.findById(userId);
     if (!user) {
-      throw new Error('User not found');
+      throw httpError('User not found', 404);
     }
 
     const secret = speakeasy.generateSecret({
-      name: `NeoFin:${user.email}`  // ✅ user exists now
+      name: `NeoFin:${user.email}`
     });
 
     await User.findByIdAndUpdate(userId, {
@@ -279,13 +323,18 @@ class AuthService {
   async verify2FA(userId, token) {
     const user = await User.findById(userId);
     if (!user) {
-      throw new Error('User not found');
+      throw httpError('User not found', 404);
+    }
+
+    if (!user.twoFactorSecret) {
+      throw httpError('2FA has not been set up for this account', 400);
     }
 
     const isValid = speakeasy.totp.verify({
       secret: user.twoFactorSecret,
       encoding: 'base32',
-      token
+      token,
+      window: 1
     });
 
     if (isValid) {
@@ -297,6 +346,13 @@ class AuthService {
     }
 
     return isValid;
+  }
+
+  async disable2FA(userId) {
+    await User.findByIdAndUpdate(userId, {
+      $set: { isTwoFactorEnabled: false },
+      $unset: { twoFactorSecret: '' }
+    });
   }
 
   generateAccessToken(user) {
@@ -312,7 +368,7 @@ class AuthService {
     );
   }
 
-  generateRefreshToken(user) {
+  generateRefreshToken(_user) {
     return cryptoRandomString({ length: 40, type: 'url-safe' });
   }
 }
