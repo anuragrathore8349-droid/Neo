@@ -125,10 +125,10 @@ export async function removeFromWatchlist(symbol: string): Promise<ApiResponse<s
 export interface PriceAlert {
   _id: string;
   symbol: string;
-  type: 'above' | 'below';
-  price: number;
+  condition: 'above' | 'below';
+  targetPrice: number;
   notificationTypes: string[];
-  isTriggered: boolean;
+  triggered: boolean;
   createdAt: string;
 }
 
