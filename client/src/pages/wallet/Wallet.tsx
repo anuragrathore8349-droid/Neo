@@ -133,23 +133,6 @@ const Wallet: React.FC = () => {
         const gData = (gasRes.value as any)?.data;
         if (gData) setGasPrice(gData);
       }
-
-      // Monitor for MetaMask/wallet changes
-      if (window.ethereum) {
-        window.ethereum.on('chainChanged', (chainId: string) => {
-          setCurrentChainId(chainId);
-        });
-        window.ethereum.on('accountsChanged', () => {
-          loadWalletData();
-        });
-
-        try {
-          const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-          setCurrentChainId(chainId);
-        } catch (e) {
-          console.warn('Could not get chain ID:', e);
-        }
-      }
     } catch (err: any) {
       console.error('Failed to load wallet data:', err);
       setError(err.message || 'Failed to load wallet data');
@@ -157,6 +140,38 @@ const Wallet: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Setup MetaMask listeners once - SEPARATE effect to prevent duplicate listeners
+  useEffect(() => {
+    if (!window.ethereum) return;
+
+    const handleChainChanged = (chainId: string) => {
+      setCurrentChainId(chainId);
+    };
+
+    const handleAccountsChanged = () => {
+      loadWalletData();
+    };
+
+    // Add listeners
+    window.ethereum.on('chainChanged', handleChainChanged);
+    window.ethereum.on('accountsChanged', handleAccountsChanged);
+
+    // Get initial chain ID
+    try {
+      window.ethereum.request({ method: 'eth_chainId' }).then((chainId: string) => {
+        setCurrentChainId(chainId);
+      });
+    } catch (e) {
+      console.warn('Could not get chain ID:', e);
+    }
+
+    // IMPORTANT: Remove listeners on cleanup to prevent duplicate listeners
+    return () => {
+      window.ethereum?.removeListener('chainChanged', handleChainChanged);
+      window.ethereum?.removeListener('accountsChanged', handleAccountsChanged);
+    };
+  }, []);
 
   useEffect(() => {
     loadWalletData();
@@ -192,8 +207,8 @@ const Wallet: React.FC = () => {
         };
         const network = networkMap[chainId] || 'Ethereum';
 
-        // Sign a message to verify ownership
-        const message = `Sign to verify wallet ownership for NeoFin.\nWallet: ${address}\nTimestamp: ${Date.now()}`;
+        // Sign a message to verify ownership - use fixed format that server can verify
+        const message = `Connect wallet ${address} to NeoFin`;
         const signature = await window.ethereum.request({
           method: 'personal_sign',
           params: [message, address],
