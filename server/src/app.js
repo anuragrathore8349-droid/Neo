@@ -31,9 +31,6 @@ app.use(helmet({
 app.use(cors(config.corsOptions));
 app.use(compression());
 
-// ⚠️ Payment MUST be before express.json() for Stripe webhook raw body
-app.use('/api/payment', require('./api/routes/payment.routes'));
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -41,6 +38,7 @@ app.use(loggerMiddleware);
 
 // ── API Routes ────────────────────────────────────────────────────────────
 app.use('/api/auth',             require('./api/routes/auth.routes'));
+app.use('/api/payment',          require('./api/routes/payment.routes'));
 app.use('/api/trading',          require('./api/routes/trading.routes'));
 app.use('/api/market',           require('./api/routes/market.routes'));
 app.use('/api/defi',             require('./api/routes/defi.routes'));
