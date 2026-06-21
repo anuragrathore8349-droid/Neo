@@ -53,7 +53,7 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
     unlimitedTransactions: ['pro', 'enterprise']
   };
 
-  // Fetch all available plans
+  // Fetch all available plans (public endpoint, no auth needed)
   const fetchPlans = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -67,12 +67,13 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Fetch user's subscription
+  // Fetch user's subscription (requires auth - safe to fail silently
+  // when called for a logged-out visitor, e.g. on the landing page)
   const fetchUserSubscription = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = await paymentService.getUserSubscription();
-      
+
       if (response.subscription) {
         setUserSubscription({
           planId: response.subscription.planId,
@@ -80,8 +81,7 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
           currentPeriodStart: response.subscription.currentPeriodStart,
           currentPeriodEnd: response.subscription.currentPeriodEnd
         });
-        
-        // Set current plan based on subscription
+
         const plan = allPlans.find(p => p.id === response.subscription.planId);
         if (plan) {
           setCurrentPlan(plan);
@@ -91,16 +91,21 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
           planId: response.currentPlan,
           status: 'active'
         });
-        
+
         const plan = allPlans.find(p => p.id === response.currentPlan);
         if (plan) {
           setCurrentPlan(plan);
         }
       }
-      
+
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch subscription');
+    } catch (err: any) {
+      // A 401 here just means the visitor isn't logged in yet (e.g. on
+      // the landing page) - that's expected and shouldn't surface as an
+      // error banner.
+      if (err?.status !== 401) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch subscription');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -119,20 +124,23 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return currentPlan.limits?.[limitType] || null;
   }, [currentPlan]);
 
-  // Upgrade to a plan
+  // Select/upgrade to a plan.
+  // - Paid plans: backend returns { sessionId, url } -> redirect to Stripe.
+  // - Free "basic" plan: backend activates immediately and returns
+  //   { free: true, planId, status } -> just refresh local subscription state.
   const upgradeToPlans = useCallback(async (planId: string) => {
     try {
       setIsLoading(true);
       const response = await paymentService.createCheckoutSession(planId);
-      
-      if (response.sessionId && response.url) {
+
+      if (response.url) {
         // Redirect to Stripe checkout for paid plans
         window.location.href = response.url;
-      } else if (response.data || response.success) {
-        // Plan activated (free plan)
+      } else if (response.free) {
+        // Free plan activated immediately - refresh subscription state
         await fetchUserSubscription();
       }
-      
+
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to initiate checkout');
@@ -161,19 +169,21 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await fetchUserSubscription();
   }, [fetchUserSubscription]);
 
-  // Load plans and user subscription on mount
+  // Load plans on mount
   useEffect(() => {
-    const initializePlans = async () => {
-      await fetchPlans();
-    };
-    
-    initializePlans();
+    fetchPlans();
   }, [fetchPlans]);
 
-  // Fetch user subscription when plans are loaded
+  // Fetch user subscription once plans are loaded AND the user is logged in.
+  // (Checking for a stored auth token avoids a guaranteed 401 + console
+  // noise for anonymous visitors on the landing page.)
   useEffect(() => {
-    if (allPlans.length > 0) {
+    if (allPlans.length === 0) return;
+    const hasSession = !!localStorage.getItem('neofin_auth');
+    if (hasSession) {
       fetchUserSubscription();
+    } else {
+      setIsLoading(false);
     }
   }, [allPlans.length, fetchUserSubscription]);
 
