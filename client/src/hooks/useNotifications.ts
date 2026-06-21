@@ -51,7 +51,7 @@ export function useNotifications(): UseNotificationsReturn {
   const connectWebSocket = useCallback(() => {
     if (!user?.id || !token || socketRef.current?.connected) return;
 
-    const wsUrl = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
+    const wsUrl = import.meta.env.VITE_WS_URL || 'http://localhost:3003';
 
     try {
       socketRef.current = io(`${wsUrl}/notifications`, {
@@ -64,6 +64,7 @@ export function useNotifications(): UseNotificationsReturn {
 
       socketRef.current.on('connect', () => {
         console.log('📬 Notifications WebSocket connected');
+        console.log('📬 Authenticating user:', user.id);
         socketRef.current?.emit('authenticate', user.id);
       });
 
@@ -151,23 +152,29 @@ export function useNotifications(): UseNotificationsReturn {
 
   // Fetch notifications from API
   const fetchNotifications = useCallback(async (limit = 20, skip = 0, unreadOnly = false) => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      console.warn('⚠️ Cannot fetch notifications: no user ID');
+      return;
+    }
 
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
+      console.log('📬 Fetching notifications from API...');
       const res = await apiFetch(
         `/api/user/notifications?limit=${limit}&skip=${skip}&unreadOnly=${unreadOnly}`
       );
-      const data = (res as any).data || res;
+      const response = (res as any);
+      console.log('📬 API Response:', response);
 
       setState(prev => ({
         ...prev,
-        notifications: data.data || data.notifications || [],
-        unreadCount: data.unreadCount ?? 0,
+        notifications: response.data || [],
+        unreadCount: response.unreadCount ?? 0,
         loading: false,
       }));
     } catch (err: any) {
+      console.error('❌ Failed to fetch notifications:', err);
       setState(prev => ({
         ...prev,
         error: err.message || 'Failed to fetch notifications',
