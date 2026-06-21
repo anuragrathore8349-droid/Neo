@@ -11,6 +11,11 @@ router.post('/register',
   authController.register
 );
 
+router.post('/resend-verification',
+  validateRequest(authSchemas.resendVerification),
+  authController.resendVerification
+);
+
 router.post('/login',
   validateRequest(authSchemas.login),
   authController.login
@@ -21,8 +26,11 @@ router.post('/refresh-token',
   authController.refreshToken
 );
 
+// NOTE: logout intentionally does NOT require authMiddleware.
+// If the access token has already expired, the user must still be able
+// to clear their session/refresh-token cookie. The refresh token itself
+// (cookie or body) is what identifies the session to invalidate.
 router.post('/logout',
-  authMiddleware,
   validateRequest(authSchemas.logout),
   authController.logout
 );
@@ -51,6 +59,11 @@ router.post('/2fa/verify',
   authMiddleware,
   validateRequest(authSchemas.verify2FA),
   authController.verify2FA
+);
+
+router.post('/2fa/disable',
+  authMiddleware,
+  authController.disable2FA
 );
 
 module.exports = router;
