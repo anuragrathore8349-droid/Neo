@@ -13,6 +13,12 @@ const authSchemas = {
     })
   }),
 
+  resendVerification: z.object({
+    body: z.object({
+      email: z.string().email('Invalid email address')
+    })
+  }),
+
   login: z.object({
     body: z.object({
       email: z.string().email('Invalid email address'),
@@ -28,7 +34,9 @@ const authSchemas = {
   }),
 
   logout: z.object({
-    body: z.object({})
+    body: z.object({
+      refreshToken: z.string().optional()
+    }).optional()
   }),
 
   forgotPassword: z.object({
