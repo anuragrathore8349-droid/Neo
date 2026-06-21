@@ -74,11 +74,20 @@ class PortfolioService {
       }, {})
     }));
 
-    // 🔥 FIX 2: never return empty
+    // 🔥 FIX 2: never return empty - ensure assets property exists
     if (!history.length) {
+      // ✅ BUILD INITIAL ASSETS BREAKDOWN
+      const assets = {};
+      for (const asset of (portfolio.assets || [])) {
+        if (asset.value > 0) {
+          assets[asset.symbol] = asset.value;
+        }
+      }
+      
       history = [{
         timestamp: Date.now(),
-        value: portfolio.totalValue || 0
+        value: portfolio.totalValue || 0,
+        assets: assets  // ✅ INCLUDE ASSETS BREAKDOWN
       }];
     }
 
@@ -108,13 +117,32 @@ class PortfolioService {
           // Linear interpolation from cost basis to current value + slight noise
           const noise    = 1 + (Math.random() - 0.48) * 0.015;
           const value    = parseFloat((startValue + (currentValue - startValue) * fraction * noise).toFixed(2));
-          syntheticPoints.push({ timestamp: ts, value: Math.max(0, value) });
+          
+          // ✅ BUILD PER-ASSET BREAKDOWN FOR SYNTHETIC DATA
+          const assets = {};
+          for (const asset of (portfolio.assets || [])) {
+            // Distribute asset values proportionally across timeframe
+            const assetStartValue = (asset.costBasis || 0);
+            const assetCurrentValue = asset.value || 0;
+            const assetValue = parseFloat(
+              (assetStartValue + (assetCurrentValue - assetStartValue) * fraction).toFixed(2)
+            );
+            if (assetValue > 0) {
+              assets[asset.symbol] = assetValue;
+            }
+          }
+          
+          syntheticPoints.push({ 
+            timestamp: ts, 
+            value: Math.max(0, value),
+            assets: assets  // ✅ INCLUDE ASSETS BREAKDOWN
+          });
         }
         history = syntheticPoints;
       } else {
         history = [
-          { timestamp: Date.now() - 86400000, value: 0 },
-          { timestamp: Date.now(), value: 0 },
+          { timestamp: Date.now() - 86400000, value: 0, assets: {} },
+          { timestamp: Date.now(), value: 0, assets: {} },
         ];
       }
     }
@@ -1041,25 +1069,77 @@ async addMultipleAssets(userId, assets) {
   // ── NEW ASSET CRUD METHODS ─────────────────────────────────────────────────
 
   async addAsset(userId, assetData) {
+    const Transaction = require('../models/transaction.model');
     const portfolio = await this.ensureUserPortfolio(userId);
     const { symbol, name, type, amount, costBasis, purchaseDate } = assetData;
 
     const upper = symbol.toUpperCase();
     const existing = portfolio.assets.find(a => a.symbol === upper);
+    
+    // Fetch current price (fallback to costBasis if fetch fails)
+    let currentPrice = costBasis;
+    try {
+      const priceData = await this.fetchAssetPrice(upper);
+      if (priceData) currentPrice = priceData.price;
+    } catch (err) {
+      // Use costBasis as fallback
+    }
+
+    const transactionTimestamp = purchaseDate ? new Date(purchaseDate) : new Date();
+
     if (existing) {
       // Average down / up
       const totalCost = existing.costBasis * existing.amount + costBasis * amount;
       existing.amount   += amount;
       existing.costBasis = totalCost / existing.amount;
-      if (purchaseDate && new Date(purchaseDate) < new Date(existing.purchaseDate || 0)) {
-        existing.purchaseDate = purchaseDate;
+      existing.currentPrice = currentPrice;
+      existing.value = existing.amount * currentPrice;
+      if (purchaseDate && new Date(purchaseDate) < new Date(existing.acquiredAt || 0)) {
+        existing.acquiredAt = new Date(purchaseDate);
       }
     } else {
-      portfolio.assets.push({ symbol: upper, name, type, amount, costBasis, purchaseDate });
+      // Generate assetId for new asset
+      const { Types } = require('mongoose');
+      portfolio.assets.push({
+        assetId: new Types.ObjectId().toString(),
+        symbol: upper,
+        name: name || upper,
+        type,
+        amount,
+        costBasis,
+        currentPrice,
+        value: amount * currentPrice,
+        acquiredAt: purchaseDate ? new Date(purchaseDate) : new Date(),
+        profit: 0,
+        profitPercentage: 0,
+        allocation: 0,
+        change24h: 0
+      });
     }
 
     await this.updatePortfolioMetrics(portfolio);
     await portfolio.save();
+
+    // ✅ CREATE TRANSACTION RECORD for portfolio history
+    try {
+      const transaction = new Transaction({
+        userId,
+        type: amount > 0 ? 'buy' : 'sell',
+        asset: upper,
+        assetName: name || upper,
+        amount: Math.abs(amount),
+        fee: 0,
+        network: 'portfolio',
+        status: 'completed',
+        timestamp: transactionTimestamp,
+        memo: `Manual ${amount > 0 ? 'buy' : 'sell'} entry`
+      });
+      await transaction.save();
+    } catch (txErr) {
+      // Log but don't fail the asset addition if transaction creation fails
+      console.warn('Failed to create transaction record for asset:', txErr.message);
+    }
+
     return portfolio;
   }
 
@@ -1067,6 +1147,13 @@ async addMultipleAssets(userId, assets) {
     const portfolio = await this.ensureUserPortfolio(userId);
     const asset = portfolio.assets.id(assetId);
     if (!asset) throw new Error('Asset not found');
+    
+    // Map purchaseDate to acquiredAt if provided
+    if (updates.purchaseDate) {
+      updates.acquiredAt = new Date(updates.purchaseDate);
+      delete updates.purchaseDate;
+    }
+    
     Object.assign(asset, updates);
     await this.updatePortfolioMetrics(portfolio);
     await portfolio.save();
