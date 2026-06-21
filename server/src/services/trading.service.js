@@ -207,98 +207,106 @@ class TradingService {
     return normalized;
   }
 
-  async placeOrder(userId, orderData) {
+
+async placeOrder(userId, orderData) {
+  try {
+    const {
+      symbol, exchange = 'binance', type, side, amount, price,
+      stopPrice, timeInForce = 'GTC', postOnly = false, reduceOnly = false,
+      stopLoss, takeProfit, clientOrderId,
+      mode = 'live',   // 'paper' | 'live'
+    } = orderData;
+
+    // ── Paper mode: delegate to paper trading service ─────────────────────
+    if (mode === 'paper' || exchange === 'paper') {
+      const paperTradingService = require('./paper-trading.service');
+      return paperTradingService.placePaperTrade(userId, {
+        symbol, side, amount, price, type,
+      });
+    }
+
+    // ── Validate user has sufficient balance ──────────────────────────────
+    await this.validateUserBalance(userId, { symbol, side, amount, price });
+
+    // ── Try user-specific API keys first, fall back to global ─────────────
+    let authenticatedExchange = await this.loadUserApiKeys(userId, exchange);
+    if (!authenticatedExchange) {
+      authenticatedExchange = this.getExchange(exchange, true);
+    }
+    if (!authenticatedExchange) {
+      throw new Error(`No API credentials for exchange: ${exchange}. Add API keys in Settings.`);
+    }
+
+    // ── Normalize symbol for exchange ─────────────────────────────────────
+    const normalizedSymbol = await this.normalizeSymbolForExchange(symbol, exchange);
+
+    // ── Create order record in DB ─────────────────────────────────────────
+    const newOrder = new Order({
+      userId,
+      symbol:        normalizedSymbol,
+      exchange,
+      type,
+      side,
+      amount,
+      price:         type !== 'market' ? price : undefined,
+      stopPrice,
+      timeInForce,
+      postOnly,
+      reduceOnly,
+      status:        'open',
+      filledAmount:  0,
+      stopLoss,
+      takeProfit,
+      clientOrderId: clientOrderId || uuidv4(),
+    });
+
+    await newOrder.save();
+
+    // ── Submit to exchange ────────────────────────────────────────────────
     try {
-      const isPaperTrade = orderData.mode === 'paper' || process.env.ENABLE_PAPER_TRADING === 'true';
-
-      if (isPaperTrade) {
-        // ── Paper trade ───────────────────────────────────────────────────────
-        const result = await paperTradingService.placePaperTrade(userId, orderData);
-        const trade  = result.trade;
-
-        // Mirror in the shared orders collection so order history works
-        const order = await Order.create({
-          userId,
-          symbol:       trade.symbol,
-          exchange:     orderData.exchange || 'paper',
-          side:         trade.side,
-          type:         trade.type || 'market',
-          amount:       trade.amount,
-          price:        trade.price,
-          status:       'filled',
-          filledAmount: trade.amount,
-          averageFilledPrice: trade.price,
-          mode:         'paper',
-          metadata:     { paperTradeId: trade._id?.toString() },
-        });
-
-        // Notify via WebSocket
-        if (global.tradingHandler) {
-          global.tradingHandler.broadcastOrderUpdate(userId, order);
-        }
-        if (global.portfolioHandler) {
-          global.portfolioHandler.broadcastPortfolioUpdate(userId);
-        }
-
-        return { order, paperResult: result };
-      }
-
-      // ── Real trade ─────────────────────────────────────────────────────────
-      const { symbol, exchange: exchangeId = 'binance', side, type, amount, price,
-              timeInForce = 'GTC' } = orderData;
-
-      // First try to load user's own API keys, fall back to server keys if not available
-      let exchangeClient = await this.loadUserApiKeys(userId, exchangeId);
-      if (!exchangeClient) {
-        exchangeClient = this.getExchange(exchangeId, true);
-      }
-      if (!exchangeClient) {
-        throw new Error(`No authenticated client for exchange "${exchangeId}". Add API keys in Settings.`);
-      }
-
-      const tradingPair = await this.normalizeSymbolForExchange(symbol, exchangeId);
-
-      let exchangeOrder;
-      if (type === 'market') {
-        exchangeOrder = await exchangeClient.createMarketOrder(tradingPair, side, amount);
-      } else if (type === 'limit') {
-        if (!price) throw new Error('Price is required for limit orders');
-        exchangeOrder = await exchangeClient.createLimitOrder(tradingPair, side, amount, price, { timeInForce });
-      } else {
-        throw new Error(`Order type "${type}" not supported`);
-      }
-
-      const order = await Order.create({
-        userId,
-        symbol,
-        exchange:           exchangeId,
-        side,
-        type,
-        amount,
-        price:              price || null,
-        status:             this.normalizeOrderStatus(exchangeOrder.status),
-        exchangeOrderId:    exchangeOrder.id,
-        filledAmount:       exchangeOrder.filled || 0,
-        averageFilledPrice: exchangeOrder.average || price || 0,
-        mode:               'live',
+      const exchangeOrder = await this.placeExchangeOrder({
+        ...orderData,
+        symbol:       normalizedSymbol,
+        clientOrderId: newOrder.clientOrderId,
       });
 
-      if (['filled', 'closed'].includes(order.status)) {
-        await this.updatePortfolio(userId, order);
+      newOrder.exchangeOrderId = exchangeOrder.id;
+
+      // If immediately filled (market order)
+      if (['filled', 'closed'].includes(exchangeOrder.status)) {
+        newOrder.status             = 'filled';
+        newOrder.filledAmount       = exchangeOrder.filled || amount;
+        newOrder.averageFilledPrice = exchangeOrder.average || price;
+        await newOrder.save();
+        await this.updatePortfolio(userId, newOrder);
       } else {
-        await scheduleOrderSync(order._id, exchangeId);
+        await newOrder.save();
+        // Schedule background status sync
+        try { scheduleOrderSync(newOrder._id.toString()); } catch { /* non-critical */ }
+      }
+    } catch (exchangeError) {
+      newOrder.status = 'rejected';
+      await newOrder.save();
+
+      // Broadcast rejection to client via WS
+      if (global.tradingHandler) {
+        global.tradingHandler.broadcastOrderUpdate(userId.toString(), newOrder);
       }
 
-      if (global.tradingHandler) global.tradingHandler.broadcastOrderUpdate(userId, order);
-      if (global.portfolioHandler) global.portfolioHandler.broadcastPortfolioUpdate(userId);
-
-      return { order };
-    } catch (error) {
-      logger.error('Error placing order:', error);
-      throw error;
+      throw new Error(`Exchange rejected order: ${exchangeError.message}`);
     }
-  }
 
+    // ── Broadcast new order via WebSocket ─────────────────────────────────
+    if (global.tradingHandler) {
+      global.tradingHandler.broadcastOrderUpdate(userId.toString(), newOrder);
+    }
+
+    return newOrder;
+  } catch (error) {
+    logger.error('Error placing order:', error);
+    throw error;
+  }
+}
   normalizeOrderStatus(status) {
     const map = { open: 'open', closed: 'filled', canceled: 'cancelled', cancelled: 'cancelled',
                   partially_filled: 'partially_filled', expired: 'cancelled' };
