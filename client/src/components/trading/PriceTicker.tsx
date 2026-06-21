@@ -17,7 +17,11 @@ const DEFAULT_SYMBOLS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LIN
 const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) => {
   const [items, setItems] = useState<TickerItem[]>([]);
   const [isPaused, setIsPaused] = useState(false);
+  const [animationDuration, setAnimationDuration] = useState(50);
+  const [screenWidth, setScreenWidth] = useState(window.innerWidth);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const fetchPrices = async () => {
     try {
@@ -52,6 +56,37 @@ const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) 
     return () => clearInterval(intervalRef.current);
   }, []);
 
+  // Track screen width and calculate animation duration
+  useEffect(() => {
+    const handleResize = () => {
+      setScreenWidth(window.innerWidth);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const calculateDuration = () => {
+      if (contentRef.current && containerRef.current) {
+        const contentWidth = contentRef.current.scrollWidth;
+        const containerWidth = containerRef.current.clientWidth;
+        
+        if (contentWidth > 0) {
+          // Calculate duration: ensure content scrolls smoothly across viewport
+          // Faster for small screens, slower for large screens
+          const baseSpeed = screenWidth < 640 ? 25 : screenWidth < 1024 ? 35 : 45;
+          const duration = (contentWidth / containerWidth) * baseSpeed;
+          setAnimationDuration(Math.max(20, duration));
+        }
+      }
+    };
+
+    // Small delay to ensure DOM is ready
+    const timeoutId = setTimeout(calculateDuration, 100);
+    return () => clearTimeout(timeoutId);
+  }, [items, screenWidth]);
+
   if (items.length === 0) return null;
 
   const fmt = (v: number) =>
@@ -65,26 +100,51 @@ const PriceTicker: React.FC<PriceTickerProps> = ({ symbols = DEFAULT_SYMBOLS }) 
 
   return (
     <div
-      className="w-full h-12 overflow-hidden bg-dark-900/80 border-b border-dark-700 py-1.5 flex items-center"
+      ref={containerRef}
+      className="w-full overflow-x-hidden bg-dark-900/80 border-b border-dark-700 py-1 sm:py-1.5 flex items-center"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
     >
       <div
-        className="flex gap-8 whitespace-nowrap"
+        ref={contentRef}
+        className="flex whitespace-nowrap"
         style={{
-          animation: 'ticker-scroll 40s linear infinite',
+          animation: `ticker-scroll ${animationDuration}s linear infinite`,
           animationPlayState: isPaused ? 'paused' : 'running',
+          minHeight: '2rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: screenWidth < 640 ? '0.75rem' : screenWidth < 1024 ? '1rem' : '1.5rem',
+          paddingLeft: screenWidth < 640 ? '0.5rem' : screenWidth < 1024 ? '1rem' : '1rem',
+          paddingRight: screenWidth < 640 ? '0.5rem' : screenWidth < 1024 ? '1rem' : '1rem',
         }}
       >
         {all.map((item, idx) => (
-          <span key={`${item.symbol}-${idx}`} className="inline-flex items-center gap-2 text-sm">
-            <span className="font-semibold text-light">{item.symbol}</span>
-            <span className="text-dark-300">{fmt(item.price)}</span>
-            <span className={`flex items-center gap-0.5 ${item.change24h >= 0 ? 'text-secondary' : 'text-red-500'}`}>
-              {item.change24h >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+          <div 
+            key={`${item.symbol}-${idx}`} 
+            className="inline-flex items-center flex-shrink-0"
+            style={{ gap: screenWidth < 640 ? '0.25rem' : '0.5rem' }}
+          >
+            <span 
+              className="font-semibold text-light whitespace-nowrap"
+              style={{ fontSize: screenWidth < 640 ? '0.65rem' : screenWidth < 1024 ? '0.75rem' : '0.875rem' }}
+            >
+              {item.symbol}
+            </span>
+            <span 
+              className="text-dark-300 whitespace-nowrap"
+              style={{ fontSize: screenWidth < 640 ? '0.65rem' : screenWidth < 1024 ? '0.75rem' : '0.875rem' }}
+            >
+              {fmt(item.price)}
+            </span>
+            <span 
+              className={`flex items-center whitespace-nowrap flex-shrink-0 ${item.change24h >= 0 ? 'text-secondary' : 'text-red-500'}`}
+              style={{ fontSize: screenWidth < 640 ? '0.65rem' : screenWidth < 1024 ? '0.75rem' : '0.875rem', gap: '0.125rem' }}
+            >
+              {item.change24h >= 0 ? <TrendingUp size={screenWidth < 640 ? 8 : 10} /> : <TrendingDown size={screenWidth < 640 ? 8 : 10} />}
               {item.change24h >= 0 ? '+' : ''}{item.change24h.toFixed(2)}%
             </span>
-          </span>
+          </div>
         ))}
       </div>
       <style>{`
