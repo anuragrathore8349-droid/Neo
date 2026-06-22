@@ -491,10 +491,14 @@ const MarketOverview: React.FC<MarketOverviewProps> = ({
                     {formatPercentage(getChangeForTimeframe(asset.change24h))}
                   </div>
                 </td>
-                <td className="py-3 px-4 text-right text-dark-400">
-                  {asset.marketCap ? formatMarketCap(asset.marketCap) : <span className="text-dark-600 text-xs">No data</span>}
-                </td>
-                <td className="py-3 px-4 text-right text-dark-400">
+<td className="py-3 px-4 text-right text-dark-400">
+  {asset.marketCap && asset.marketCap > 0
+    ? formatMarketCap(asset.marketCap)
+    : asset.price && asset.price > 0
+      ? <span className="text-dark-500 text-xs italic">Est. calc.</span>
+      : <span className="text-dark-600 text-xs">—</span>
+  }
+</td>                <td className="py-3 px-4 text-right text-dark-400">
                   {asset.volume24h
                     ? asset.volume24h >= 1e9
                       ? `$${(asset.volume24h / 1e9).toFixed(2)}B`
