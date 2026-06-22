@@ -117,7 +117,7 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                   )}
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                  {notifications.length === 0 ? (
+                  {!Array.isArray(notifications) || notifications.length === 0 ? (
                     <div className="p-8 text-center text-dark-400">
                       <Bell size={24} className="mx-auto mb-2 opacity-50" />
                       <p className="text-sm">No notifications yet</p>
