@@ -9,11 +9,16 @@ class NotificationController {
   async getNotifications(req, res, next) {
     try {
       const { limit = 20, skip = 0, unreadOnly = false } = req.query;
-      const result = await notificationService.getNotifications(req.user.userId, {
+      
+      logger.info(`[Notification] getNotifications called - userId: ${req.user.userId}, req.user.id: ${req.user.id}`);
+      
+      const result = await notificationService.getNotifications(req.user.id || req.user.userId, {
         limit: parseInt(limit),
         skip: parseInt(skip),
         unreadOnly: unreadOnly === 'true',
       });
+
+      logger.info(`[Notification] Found ${result.data.length} notifications for user ${req.user.userId}`);
 
       res.json({
         status: 'success',
@@ -33,7 +38,7 @@ class NotificationController {
    */
   async getNotification(req, res, next) {
     try {
-      const notification = await notificationService.getNotification(req.user.userId, req.params.id);
+      const notification = await notificationService.getNotification(req.user.id || req.user.userId, req.params.id);
       res.json({ status: 'success', data: notification });
     } catch (error) {
       if (error.message.includes('not found')) {
@@ -50,7 +55,7 @@ class NotificationController {
    */
   async markAsRead(req, res, next) {
     try {
-      const notification = await notificationService.markAsRead(req.user.userId, req.params.id);
+      const notification = await notificationService.markAsRead(req.user.id || req.user.userId, req.params.id);
       res.json({ status: 'success', data: notification });
     } catch (error) {
       if (error.message.includes('not found')) {
@@ -67,7 +72,7 @@ class NotificationController {
    */
   async markAllAsRead(req, res, next) {
     try {
-      const result = await notificationService.markAllAsRead(req.user.userId);
+      const result = await notificationService.markAllAsRead(req.user.id || req.user.userId);
       res.json({ status: 'success', message: 'All notifications marked as read', modifiedCount: result.modifiedCount });
     } catch (error) {
       logger.error('Mark all as read error:', error);
@@ -81,7 +86,7 @@ class NotificationController {
    */
   async deleteNotification(req, res, next) {
     try {
-      await notificationService.deleteNotification(req.user.userId, req.params.id);
+      await notificationService.deleteNotification(req.user.id || req.user.userId, req.params.id);
       res.json({ status: 'success', message: 'Notification deleted' });
     } catch (error) {
       if (error.message.includes('not found')) {
@@ -98,7 +103,7 @@ class NotificationController {
    */
   async deleteAllNotifications(req, res, next) {
     try {
-      const result = await notificationService.deleteAllNotifications(req.user.userId);
+      const result = await notificationService.deleteAllNotifications(req.user.id || req.user.userId);
       res.json({ status: 'success', message: 'All notifications deleted', deletedCount: result.deletedCount });
     } catch (error) {
       logger.error('Delete all notifications error:', error);
@@ -112,7 +117,7 @@ class NotificationController {
    */
   async getUnreadCount(req, res, next) {
     try {
-      const count = await notificationService.getUnreadCount(req.user.userId);
+      const count = await notificationService.getUnreadCount(req.user.id || req.user.userId);
       res.json({ status: 'success', unreadCount: count });
     } catch (error) {
       logger.error('Get unread count error:', error);
