@@ -17,9 +17,12 @@ const NotificationsPage: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
 
+  // Ensure notifications is always an array
+  const notificationsArray = Array.isArray(notifications) ? notifications : [];
+
   const filteredNotifications = filter === 'unread' 
-    ? notifications.filter(n => !n.isRead)
-    : notifications;
+    ? notificationsArray.filter(n => !n.isRead)
+    : notificationsArray;
 
   const sortedNotifications = [...filteredNotifications].sort((a, b) => {
     const dateA = new Date(a.createdAt).getTime();
@@ -69,7 +72,7 @@ const NotificationsPage: React.FC = () => {
     return 'just now';
   };
 
-  if (loading && notifications.length === 0) {
+  if (loading && notificationsArray.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader className="w-8 h-8 animate-spin text-primary" />
@@ -96,7 +99,7 @@ const NotificationsPage: React.FC = () => {
                 : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
             }`}
           >
-            All ({notifications.length})
+            All ({notificationsArray.length})
           </button>
           <button
             onClick={() => setFilter('unread')}
@@ -129,7 +132,7 @@ const NotificationsPage: React.FC = () => {
             </button>
           )}
 
-          {notifications.length > 0 && (
+          {notificationsArray.length > 0 && (
             <button
               onClick={() => deleteAllNotifications()}
               className="px-4 py-2 bg-dark-700 hover:bg-red-500/20 rounded-lg text-sm font-medium text-red-400 transition-colors flex items-center gap-2"
