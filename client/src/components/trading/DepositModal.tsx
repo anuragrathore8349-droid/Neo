@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Check, AlertCircle, Loader } from 'lucide-react';
+import { Copy, Check, AlertCircle, Loader, Wallet } from 'lucide-react';
 import Modal from '../common/Modal';
 import * as walletService from '../../services/wallet.service';
 import { Asset } from '../../types';
@@ -10,7 +10,7 @@ interface DepositModalProps {
   assets: Asset[];
 }
 
-interface Wallet {
+interface WalletItem {
   _id: string;
   name: string;
   address: string;
@@ -19,245 +19,213 @@ interface Wallet {
 }
 
 const NETWORKS = [
-  { id: 'ethereum', name: 'Ethereum', symbol: 'ETH' },
-  { id: 'bsc', name: 'Binance Smart Chain', symbol: 'BSC' },
-  { id: 'polygon', name: 'Polygon', symbol: 'MATIC' },
-  { id: 'solana', name: 'Solana', symbol: 'SOL' },
-  { id: 'arbitrum', name: 'Arbitrum', symbol: 'ARB' }
+  { id: 'ethereum', name: 'Ethereum',    symbol: 'ETH',  color: '#627EEA' },
+  { id: 'bsc',      name: 'BNB Chain',   symbol: 'BNB',  color: '#F3BA2F' },
+  { id: 'polygon',  name: 'Polygon',     symbol: 'POL',  color: '#8247E5' },
+  { id: 'solana',   name: 'Solana',      symbol: 'SOL',  color: '#14F195' },
+  { id: 'arbitrum', name: 'Arbitrum',    symbol: 'ARB',  color: '#2D374B' },
+  { id: 'base',     name: 'Base',        symbol: 'BASE', color: '#0052FF' },
 ];
 
 const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose, assets }) => {
-  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(assets[0] || null);
+  const [selectedAsset,   setSelectedAsset]   = useState<Asset | null>(assets[0] || null);
   const [selectedNetwork, setSelectedNetwork] = useState('ethereum');
-  const [depositAddress, setDepositAddress] = useState<string | null>(null);
-  const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
-
-  // Load wallets on component mount
-  const loadWallets = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await walletService.getWallets();
-      const walletList = response.data || [];
-      setWallets(walletList);
-      
-      if (walletList.length > 0) {
-        setSelectedWallet(walletList[0]._id);
-      }
-    } catch (err: unknown) {
-      const error = err as Error;
-      setError('Failed to load wallets. Please try again.');
-      console.error('Error loading wallets:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [depositAddress,  setDepositAddress]  = useState<string | null>(null);
+  const [wallets,         setWallets]         = useState<WalletItem[]>([]);
+  const [loading,         setLoading]         = useState(false);
+  const [error,           setError]           = useState<string | null>(null);
+  const [copied,          setCopied]          = useState(false);
+  const [selectedWallet,  setSelectedWallet]  = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      loadWallets();
-    }
+    if (!isOpen) return;
+    (async () => {
+      try {
+        setLoading(true); setError(null);
+        const res  = await walletService.getWallets();
+        const list = res.data || [];
+        setWallets(list);
+        if (list.length) setSelectedWallet(list[0]._id);
+      } catch { setError('Failed to load wallets.'); }
+      finally  { setLoading(false); }
+    })();
   }, [isOpen]);
 
-  // Fetch deposit address when asset, network, or wallet changes
   useEffect(() => {
     if (!isOpen || !selectedWallet || !selectedAsset || !selectedNetwork) {
-      setDepositAddress(null);
-      return;
+      setDepositAddress(null); return;
     }
-
-    const fetchDepositAddress = async () => {
+    (async () => {
       try {
-        setLoading(true);
-        setError(null);
-        const response = await walletService.getDepositAddress({
+        setLoading(true); setError(null);
+        const res = await walletService.getDepositAddress({
           walletId: selectedWallet,
-          asset: selectedAsset.symbol,
-          network: selectedNetwork
+          asset:    selectedAsset.symbol,
+          network:  selectedNetwork,
         });
-        
-        if (response.data?.address) {
-          setDepositAddress(response.data.address);
-        } else {
-          setError('Unable to fetch deposit address. Please try again.');
-        }
-      } catch (err: unknown) {
-        const error = err as { message?: string };
-        setError(error?.message || 'Failed to fetch deposit address. Please try again.');
-        console.error('Error fetching deposit address:', error);
+        if (res.data?.address) setDepositAddress(res.data.address);
+        else setError('Unable to fetch deposit address.');
+      } catch (err: any) {
+        setError(err?.message || 'Failed to fetch deposit address.');
         setDepositAddress(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDepositAddress();
+      } finally { setLoading(false); }
+    })();
   }, [isOpen, selectedAsset, selectedNetwork, selectedWallet]);
 
-  const handleCopyAddress = () => {
-    if (depositAddress) {
-      navigator.clipboard.writeText(depositAddress);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+  const copy = () => {
+    if (!depositAddress) return;
+    navigator.clipboard.writeText(depositAddress);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   if (!isOpen) return null;
 
+  const net = NETWORKS.find(n => n.id === selectedNetwork);
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Deposit Funds" size="lg">
-      <div className="space-y-6">
-        {/* Asset Selection */}
+      <div className="space-y-5">
+
+        {/* ── Asset Selection ── */}
         <div>
           <label className="block text-sm font-medium text-light mb-2">Select Asset</label>
           <select
             value={selectedAsset?.id || ''}
-            onChange={(e) => {
-              const asset = assets.find(a => a.id === e.target.value);
-              if (asset) setSelectedAsset(asset);
+            onChange={e => {
+              const a = assets.find(x => x.id === e.target.value);
+              if (a) setSelectedAsset(a);
             }}
-            className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-light focus:outline-none focus:border-primary"
+            className="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-xl text-light focus:outline-none focus:border-primary transition-colors text-sm"
           >
-            <option value="">Choose an asset...</option>
-            {assets.map((asset) => (
-              <option key={asset.id} value={asset.id}>
-                {asset.symbol} - {asset.name}
-              </option>
+            <option value="">Choose an asset…</option>
+            {assets.map(a => (
+              <option key={a.id} value={a.id}>{a.symbol} — {a.name}</option>
             ))}
           </select>
         </div>
 
-        {/* Wallet Selection */}
+        {/* ── Wallet Selection ── */}
         {wallets.length > 0 && (
           <div>
-            <label className="block text-sm font-medium text-light mb-2">Select Wallet</label>
+            <label className="block text-sm font-medium text-light mb-2">
+              <Wallet size={14} className="inline mr-1" />Select Wallet
+            </label>
             <select
               value={selectedWallet || ''}
-              onChange={(e) => setSelectedWallet(e.target.value)}
-              className="w-full px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-light focus:outline-none focus:border-primary"
+              onChange={e => setSelectedWallet(e.target.value)}
+              className="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-xl text-light focus:outline-none focus:border-primary transition-colors text-sm"
             >
-              <option value="">Choose a wallet...</option>
-              {wallets.map((wallet) => (
-                <option key={wallet._id} value={wallet._id}>
-                  {wallet.name} - {wallet.address.substring(0, 10)}...
+              {wallets.map(w => (
+                <option key={w._id} value={w._id}>
+                  {w.name} — {w.address.slice(0, 12)}…
                 </option>
               ))}
             </select>
           </div>
         )}
 
-        {/* Network Selection */}
+        {/* ── Network Selection ── */}
         <div>
           <label className="block text-sm font-medium text-light mb-3">Select Network</label>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {NETWORKS.map((network) => (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {NETWORKS.map(n => (
               <button
-                key={network.id}
-                onClick={() => setSelectedNetwork(network.id)}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium text-sm ${
-                  selectedNetwork === network.id
-                    ? 'bg-primary border-primary text-white'
-                    : 'bg-dark-800 border-dark-700 text-dark-400 hover:border-primary/50'
+                key={n.id}
+                onClick={() => setSelectedNetwork(n.id)}
+                className={`flex flex-col items-center px-3 py-3 rounded-xl border-2 transition-all text-center ${
+                  selectedNetwork === n.id
+                    ? 'border-primary bg-primary/10 text-white'
+                    : 'border-dark-700 bg-dark-800 text-dark-400 hover:border-dark-500'
                 }`}
               >
-                <div>{network.symbol}</div>
-                <div className="text-xs opacity-75">{network.name}</div>
+                <span className="font-bold text-sm">{n.symbol}</span>
+                <span className="text-xs mt-0.5 opacity-70 leading-tight">{n.name}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Error Message */}
+        {/* ── Error ── */}
         {error && (
-          <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <AlertCircle size={20} className="text-red-500 flex-shrink-0" />
+          <div className="flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+            <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
             <p className="text-red-400 text-sm">{error}</p>
           </div>
         )}
 
-        {/* Loading State */}
+        {/* ── Loading ── */}
         {loading && (
-          <div className="flex items-center justify-center gap-2 p-4">
+          <div className="flex items-center justify-center gap-2 py-4">
             <Loader size={20} className="text-primary animate-spin" />
-            <span className="text-dark-400">Fetching deposit address...</span>
+            <span className="text-dark-400 text-sm">Fetching address…</span>
           </div>
         )}
 
-        {/* Deposit Address Display */}
+        {/* ── Address Display ── */}
         {depositAddress && !loading && (
-          <div className="space-y-4">
-            <div className="p-4 bg-dark-800 rounded-lg border border-dark-700">
-              <p className="text-xs text-dark-400 mb-2">Deposit Address</p>
-              <div className="flex items-center gap-3">
-                <code className="flex-1 text-sm break-all font-mono text-light bg-dark-900 p-3 rounded border border-dark-600">
+          <div className="space-y-3">
+            <div className="p-4 bg-dark-800 rounded-xl border border-dark-700">
+              <p className="text-xs text-dark-400 mb-2 uppercase tracking-wider">Deposit Address ({net?.name})</p>
+              <div className="flex items-start gap-2">
+                <code className="flex-1 text-xs sm:text-sm break-all font-mono text-light bg-dark-900 p-3 rounded-lg border border-dark-600 leading-relaxed">
                   {depositAddress}
                 </code>
                 <button
-                  onClick={handleCopyAddress}
-                  className="p-2 hover:bg-dark-700 rounded transition-colors flex-shrink-0"
+                  onClick={copy}
+                  className="p-2.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors flex-shrink-0"
                   title="Copy address"
                 >
-                  {copied ? (
-                    <Check size={18} className="text-secondary" />
-                  ) : (
-                    <Copy size={18} className="text-light" />
-                  )}
+                  {copied
+                    ? <Check size={16} className="text-secondary" />
+                    : <Copy size={16} className="text-light" />}
                 </button>
               </div>
+              {copied && (
+                <p className="text-xs text-secondary mt-2 flex items-center gap-1">
+                  <Check size={11} /> Address copied to clipboard
+                </p>
+              )}
             </div>
 
-            <div className="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+            <div className="p-4 bg-primary/8 border border-primary/25 rounded-xl">
               <div className="flex gap-2">
-                <AlertCircle size={20} className="text-primary flex-shrink-0 mt-0.5" />
+                <AlertCircle size={18} className="text-primary flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-primary">
-                  <p className="font-medium mb-1">Important:</p>
-                  <ul className="text-xs space-y-1 opacity-90">
-                    <li>• Only send {selectedAsset?.symbol} to this address</li>
-                    <li>• Only use {selectedNetwork} network</li>
+                  <p className="font-semibold mb-1">Important</p>
+                  <ul className="text-xs space-y-1 text-primary/80">
+                    <li>• Only send <strong>{selectedAsset?.symbol}</strong> to this address</li>
+                    <li>• Only use the <strong>{net?.name}</strong> network</li>
                     <li>• Double-check the address before sending</li>
-                    <li>• Minimum deposit may apply</li>
+                    <li>• Deposits arrive within 5–30 min depending on congestion</li>
                   </ul>
                 </div>
               </div>
             </div>
-
-            {/* Approximate Time */}
-            <div className="text-xs text-dark-400 text-center">
-              Deposits typically arrive within 5-30 minutes depending on network congestion
-            </div>
           </div>
         )}
 
-        {/* No Wallet Message */}
-        {wallets.length === 0 && !loading && (
-          <div className="text-center py-6">
-            <AlertCircle size={32} className="mx-auto text-dark-400 mb-2" />
-            <p className="text-dark-400">No wallets connected</p>
-            <p className="text-xs text-dark-500 mt-1">
-              Please connect a wallet first from the Wallet section
-            </p>
+        {/* ── No Wallets ── */}
+        {!loading && wallets.length === 0 && (
+          <div className="text-center py-8">
+            <Wallet size={32} className="mx-auto text-dark-500 mb-3" />
+            <p className="text-dark-400 font-medium">No wallets connected</p>
+            <p className="text-xs text-dark-500 mt-1">Connect a wallet from the Wallet section first</p>
           </div>
         )}
 
-        {/* Close Button */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-dark-700">
+        {/* ── Actions ── */}
+        <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2 border-t border-dark-700">
           <button
             onClick={onClose}
-            className="px-6 py-2 rounded-lg bg-dark-800 text-light hover:bg-dark-700 transition-colors font-medium"
+            className="order-2 sm:order-1 px-5 py-2.5 rounded-xl bg-dark-800 text-light hover:bg-dark-700 transition-colors font-medium text-sm"
           >
             Close
           </button>
           {depositAddress && (
             <button
-              onClick={() => {
-                handleCopyAddress();
-                setTimeout(onClose, 500);
-              }}
-              className="px-6 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
+              onClick={() => { copy(); setTimeout(onClose, 600); }}
+              className="order-1 sm:order-2 px-5 py-2.5 rounded-xl bg-primary text-white hover:bg-primary/90 transition-colors font-medium text-sm"
             >
               Copy & Close
             </button>
