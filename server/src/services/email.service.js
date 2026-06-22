@@ -133,6 +133,37 @@ class EmailService {
       <p>If you didn't request this, please ignore this email.</p>
     `;
   }
+
+  /**
+   * Send price alert email when an alert is triggered
+   */
+  async sendPriceAlertEmail({ to, name, symbol, condition, alertPrice, currentPrice }) {
+    if (!to) {
+      console.warn('📧 Price alert email: no recipient email provided');
+      return;
+    }
+
+    const actionUrl = process.env.APP_URL ? `${process.env.APP_URL}/trading` : 'http://localhost:5173/trading';
+    
+    try {
+      return await this.sendEmail({
+        to,
+        subject: `🔔 Price Alert: ${symbol} triggered at $${currentPrice.toFixed(2)}`,
+        template: 'priceAlert',
+        context: {
+          name,
+          symbol,
+          condition,
+          targetPrice: alertPrice,
+          currentPrice: currentPrice.toFixed(2),
+          actionUrl
+        }
+      });
+    } catch (error) {
+      console.error('❌ Failed to send price alert email:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new EmailService();
