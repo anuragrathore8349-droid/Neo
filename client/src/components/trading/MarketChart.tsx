@@ -320,4 +320,4 @@ const MarketChart: React.FC<MarketChartProps> = ({ asset, data, onIntervalChange
   );
 };
 
-export default MarketChart;
+export default MarketChart;                                     
