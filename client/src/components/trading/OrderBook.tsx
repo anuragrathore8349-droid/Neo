@@ -1,11 +1,10 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import GlassCard from '../common/GlassCard';
-import { motion } from 'framer-motion';
 
 interface OrderBookEntry {
   price: number;
   amount: number;
-  total: number;
+  total?: number;
 }
 
 interface OrderBookProps {
@@ -13,113 +12,105 @@ interface OrderBookProps {
   bids: OrderBookEntry[];
   currentPrice: number;
   loading?: boolean;
+  /** Optional — called when user clicks a price level to fill trade form */
+  onLevelClick?: (price: number) => void;
 }
 
-const OrderBook: React.FC<OrderBookProps> = ({ asks, bids, currentPrice, loading = false }) => {
-  if (loading) {
-    return (
-      <GlassCard className="p-6 h-full">
-        <h3 className="text-lg font-semibold mb-4">Order Book</h3>
-        <div className="text-center py-12 text-dark-400">Loading order book...</div>
-      </GlassCard>
-    );
-  }
-  
-  if (!bids || bids.length === 0 || !asks || asks.length === 0) {
-    return (
-      <GlassCard className="p-6 h-full">
-        <h3 className="text-lg font-semibold mb-4">Order Book</h3>
-        <div className="flex flex-col items-center justify-center h-64 text-dark-400 text-sm">
-          <div className="w-5 h-5 border-2 border-dark-400 border-t-primary rounded-full animate-spin mb-3" />
-          <p>Connecting to order book...</p>
-          <p className="text-xs mt-1 text-dark-500">Select an asset to see live order book data</p>
-        </div>
-      </GlassCard>
-    );
-  }
-  
-  const formatNumber = (value: number, decimals: number = 2) => {
-    return new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals
-    }).format(value);
-  };
+const OrderBook: React.FC<OrderBookProps> = ({ asks, bids, currentPrice, loading = false, onLevelClick }) => {
+  const prevPriceRef = useRef(currentPrice);
+  const priceRef     = useRef<HTMLSpanElement>(null);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value);
-  };
+  // Flash price cell on change
+  useEffect(() => {
+    if (!priceRef.current || currentPrice === prevPriceRef.current) return;
+    const el = priceRef.current;
+    const up = currentPrice > prevPriceRef.current;
+    el.classList.add(up ? 'text-secondary' : 'text-red-400');
+    el.classList.remove(!up ? 'text-secondary' : 'text-red-400');
+    const t = setTimeout(() => {
+      el.classList.remove('text-secondary', 'text-red-400');
+      el.classList.add('text-primary');
+    }, 800);
+    prevPriceRef.current = currentPrice;
+    return () => clearTimeout(t);
+  }, [currentPrice]);
 
-  // Calculate totals and max total for visualization
-  const asksWithTotal = asks.map(ask => ({
-    ...ask,
-    total: (ask.total !== undefined) ? ask.total : ask.price * ask.amount
-  }));
+  const fmt  = (v: number, d = 2) =>
+    new Intl.NumberFormat('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+  const fmtUsd = (v: number) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
 
-  const bidsWithTotal = bids.map(bid => ({
-    ...bid,
-    total: (bid.total !== undefined) ? bid.total : bid.price * bid.amount
-  }));
-
-  const maxTotal = Math.max(
-    ...asksWithTotal.map(ask => ask.total),
-    ...bidsWithTotal.map(bid => bid.total),
-    1 // Fallback to prevent -Infinity
+  if (loading) return (
+    <GlassCard className="p-5 h-full flex flex-col">
+      <h3 className="text-base font-semibold mb-3">Order Book</h3>
+      <div className="flex-1 flex items-center justify-center text-dark-400 text-sm">Loading…</div>
+    </GlassCard>
   );
 
+  if (!bids?.length || !asks?.length) return (
+    <GlassCard className="p-5 h-full flex flex-col">
+      <h3 className="text-base font-semibold mb-3">Order Book</h3>
+      <div className="flex-1 flex flex-col items-center justify-center text-dark-400 text-sm gap-2">
+        <div className="w-5 h-5 border-2 border-dark-400 border-t-primary rounded-full animate-spin" />
+        <p>Connecting…</p>
+        <p className="text-xs text-dark-500">Subscribe to an asset to see live depth</p>
+      </div>
+    </GlassCard>
+  );
+
+  const withTotal = (arr: OrderBookEntry[]) =>
+    arr.map(e => ({ ...e, total: e.total ?? e.price * e.amount }));
+
+  const asksT = withTotal(asks.slice(0, 15));
+  const bidsT = withTotal(bids.slice(0, 15));
+  const maxTotal = Math.max(...asksT.map(e => e.total!), ...bidsT.map(e => e.total!), 1);
+
+  const Row = ({ entry, side }: { entry: (typeof asksT)[0]; side: 'ask'|'bid' }) => {
+    const pct  = Math.min(100, (entry.total! / maxTotal) * 100);
+    const bg   = side === 'ask' ? 'bg-red-500/8' : 'bg-secondary/8';
+    const col  = side === 'ask' ? 'text-red-400' : 'text-secondary';
+    return (
+      <div
+        className="grid grid-cols-3 text-right py-1.5 text-xs relative cursor-pointer hover:bg-dark-700/40 transition-colors rounded"
+        onClick={() => onLevelClick?.(entry.price)}
+      >
+        <div className={`absolute inset-0 ${bg} rounded`} style={{ width: `${pct}%`, right: 0, left: 'auto' }} />
+        <span className={`relative z-10 font-mono ${col}`}>{fmt(entry.price)}</span>
+        <span className="relative z-10 text-dark-300 font-mono">{fmt(entry.amount, 4)}</span>
+        <span className="relative z-10 text-dark-400 font-mono">{fmt(entry.total!, 2)}</span>
+      </div>
+    );
+  };
+
   return (
-    <GlassCard className="p-6 h-full">
-      <h3 className="text-lg font-semibold mb-4">Order Book</h3>
-      
-      <div className="mb-2 flex justify-between text-xs text-dark-400">
-        <span>Price (USD)</span>
-        <span>Amount</span>
-        <span>Total</span>
+    <GlassCard className="p-5 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-semibold">Order Book</h3>
+        <span className="flex items-center gap-1 text-xs text-secondary">
+          <span className="w-1.5 h-1.5 bg-secondary rounded-full animate-pulse" /> Live
+        </span>
       </div>
-      
-      {/* Asks (Sell Orders) */}
-      <div className="mb-4 max-h-40 overflow-y-auto flex flex-col-reverse">
-        {[...asksWithTotal].reverse().map((ask, index) => (
-          <div 
-            key={`ask-${index}`}
-            className="grid grid-cols-3 text-right py-1 text-sm border-b border-dark-800 relative"
-          >
-            <div 
-              className="absolute right-0 top-0 bottom-0 bg-red-500/10"
-              style={{ width: `${(ask.total / maxTotal) * 100}%` }}
-            ></div>
-            <span className="text-red-500 relative z-10">{formatNumber(ask.price)}</span>
-            <span className="relative z-10">{formatNumber(ask.amount, 4)}</span>
-            <span className="relative z-10">{formatNumber(ask.total, 4)}</span>
-          </div>
-        ))}
+
+      {/* Column headers */}
+      <div className="grid grid-cols-3 text-right text-xs text-dark-500 mb-1 px-0.5">
+        <span>Price</span><span>Amount</span><span>Total</span>
       </div>
-      
-      {/* Current Price */}
-      <div className="py-2 text-center font-medium text-lg border-y border-primary/30">
-        <span className="text-primary">{formatCurrency(currentPrice)}</span>
+
+      {/* Asks (sell) — reversed so lowest ask is near the midprice */}
+      <div className="flex-1 min-h-0 overflow-y-auto mb-1" style={{ maxHeight: 220 }}>
+        {[...asksT].reverse().map((e, i) => <Row key={`a${i}`} entry={e} side="ask" />)}
       </div>
-      
-      {/* Bids (Buy Orders) */}
-      <div className="mt-4 max-h-40 overflow-y-auto">
-        {bidsWithTotal.map((bid, index) => (
-          <div 
-            key={`bid-${index}`}
-            className="grid grid-cols-3 text-right py-1 text-sm border-b border-dark-800 relative"
-          >
-            <div 
-              className="absolute right-0 top-0 bottom-0 bg-secondary/10"
-              style={{ width: `${(bid.total / maxTotal) * 100}%` }}
-            ></div>
-            <span className="text-secondary relative z-10">{formatNumber(bid.price)}</span>
-            <span className="relative z-10">{formatNumber(bid.amount, 4)}</span>
-            <span className="relative z-10">{formatNumber(bid.total, 4)}</span>
-          </div>
-        ))}
+
+      {/* Mid price */}
+      <div className="py-2 text-center border-y border-dark-700/60 my-1">
+        <span ref={priceRef} className="text-primary text-lg font-bold transition-colors duration-300 font-mono">
+          {fmtUsd(currentPrice)}
+        </span>
+      </div>
+
+      {/* Bids (buy) */}
+      <div className="flex-1 min-h-0 overflow-y-auto mt-1" style={{ maxHeight: 220 }}>
+        {bidsT.map((e, i) => <Row key={`b${i}`} entry={e} side="bid" />)}
       </div>
     </GlassCard>
   );
