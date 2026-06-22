@@ -56,6 +56,9 @@ class NotificationService {
         query.isRead = false;
       }
 
+      logger.info(`[NotificationService] getNotifications - userId: ${userId}, unreadOnly: ${unreadOnly}`);
+      logger.info(`[NotificationService] Query: ${JSON.stringify(query)}`);
+
       const [notifications, total] = await Promise.all([
         Notification.find(query)
           .sort({ createdAt: -1 })
@@ -64,6 +67,8 @@ class NotificationService {
           .lean(),
         Notification.countDocuments(query),
       ]);
+
+      logger.info(`[NotificationService] Found ${notifications.length} notifications, total: ${total}`);
 
       const unreadCount = await Notification.countDocuments({ userId, isRead: false });
 
