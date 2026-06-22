@@ -64,17 +64,21 @@ export function useNotifications(): UseNotificationsReturn {
 
       socketRef.current.on('connect', () => {
         console.log('📬 Notifications WebSocket connected');
+        console.log('📬 Socket ID:', socketRef.current?.id);
         console.log('📬 Authenticating user:', user.id);
         socketRef.current?.emit('authenticate', user.id);
       });
 
       socketRef.current.on('notification', (data: any) => {
+        console.log('🔔 NOTIFICATION RECEIVED:', data);
         const notification: Notification = data.data || data;
+        console.log('🔔 Parsed notification:', notification);
         setState(prev => ({
           ...prev,
           notifications: [notification, ...prev.notifications],
           unreadCount: prev.unreadCount + 1,
         }));
+        console.log('🔔 ✅ Notification added to state');
       });
 
       socketRef.current.on('notification:update', (data: any) => {
@@ -137,12 +141,16 @@ export function useNotifications(): UseNotificationsReturn {
       });
 
       socketRef.current.on('error', (err: any) => {
-        console.error('WebSocket error:', err);
+        console.error('❌ WebSocket error:', err);
         setState(prev => ({ ...prev, error: err.message || 'WebSocket connection error' }));
       });
 
       socketRef.current.on('disconnect', () => {
         console.log('📬 Notifications WebSocket disconnected');
+      });
+
+      socketRef.current.on('connect_error', (err: any) => {
+        console.error('❌ WebSocket connection error:', err);
       });
     } catch (err: any) {
       console.error('Failed to connect to notifications:', err);
@@ -167,10 +175,14 @@ export function useNotifications(): UseNotificationsReturn {
       const response = (res as any);
       console.log('📬 API Response:', response);
 
+      // Ensure notifications is always an array
+      const notificationsArray = Array.isArray(response.data) ? response.data : [];
+      const unreadCountValue = typeof response.unreadCount === 'number' ? response.unreadCount : 0;
+
       setState(prev => ({
         ...prev,
-        notifications: response.data || [],
-        unreadCount: response.unreadCount ?? 0,
+        notifications: notificationsArray,
+        unreadCount: unreadCountValue,
         loading: false,
       }));
     } catch (err: any) {
