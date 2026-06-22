@@ -27,6 +27,7 @@ import SecurityCenter from './pages/Security/SecurityCenter.tsx';
 import Settings from './pages/Settings/index.tsx';
 import ProfilePage from './pages/profile/ProfilePage.tsx';
 import Analytics from './pages/Analytics';
+import Notifications from './pages/Notifications';
 // Components
 import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
@@ -157,6 +158,11 @@ function AppRoutes() {
         <Route path="/profile" element={
           <ProtectedRoute>
             <ProfilePage />
+          </ProtectedRoute>
+        } />
+        <Route path="/notifications" element={
+          <ProtectedRoute>
+            <Notifications />
           </ProtectedRoute>
         } />
       </Route>
