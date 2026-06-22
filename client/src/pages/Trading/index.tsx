@@ -1,5 +1,5 @@
 // client/src/pages/Trading/index.tsx
-import React, { useState, useEffect, useCallback, Component, ErrorInfo } from 'react';
+import React, { useState, useEffect, useCallback, Component, ErrorInfo, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/common/Tabs';
 import GlassCard from '../../components/common/GlassCard';
@@ -129,58 +129,47 @@ const Trading: React.FC = () => {
 
   useEffect(() => { refreshPortfolio(); }, [isPaperMode]);
 
-  // ── WebSocket: live orderbook via trading namespace ───────────────────────
+  // ── Live order-book via /trading WebSocket ────────────────────────────────
+  const tradingSocketRef = useRef<any>(null);
+
   useEffect(() => {
-    if (!selectedAsset) return;
+    if (!selectedAsset?.symbol) return;
+    const symbol = selectedAsset.symbol.toUpperCase();
 
-    const stored = localStorage.getItem('neofin_auth');
-    const token  = stored ? JSON.parse(stored)?.accessToken : null;
-    if (!token) return;
+    // Disconnect previous
+    tradingSocketRef.current?.disconnect();
 
-    const sock: Socket = io(`${SOCKET_URL}/trading`, {
-      auth:       { token },
-      transports: ['websocket'],
+    const sock = io(`${SOCKET_URL}/trading`, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      auth: { token: localStorage.getItem('token') || '' },
     });
+    tradingSocketRef.current = sock;
 
     sock.on('connect', () => {
-      sock.emit('subscribeOrderbook', { symbol: selectedAsset.symbol });
-      sock.emit('subscribeTrades',    { symbol: selectedAsset.symbol });
+      sock.emit('subscribeOrderbook', { symbol });
     });
 
+    // Live order book push — updates UI at ~100ms intervals from Binance
     sock.on('orderbook', (data: any) => {
-      const payload = data?.data || data;
-      if (payload?.bids || payload?.asks) {
-        setOrderBookData({ bids: payload.bids || [], asks: payload.asks || [] });
-      }
+      if (!data || data.symbol !== symbol) return;
+      setOrderBookData({
+        asks: data.asks || [],
+        bids: data.bids || [],
+      });
     });
 
-    sock.on('trade', (data: any) => {
-      const t = data?.data || data;
-      setRecentTrades(prev => [t, ...prev].slice(0, 50));
-    });
-
-    // ── Realtime order fill / update ──────────────────────────────────────
-    sock.on('orderUpdate', (data: any) => {
-      setOpenOrders(prev =>
-        prev.map(o => (o.id === data.orderId || o._id === data.orderId)
-          ? { ...o, ...data }
-          : o
-        ).filter(o => o.status === 'open')
-      );
-      if (data.status === 'filled') {
-        addToast(`Order filled: ${data.orderId?.slice(-6)}`, 'success');
-        refreshPortfolio();
-      }
-    });
-
-    sock.on('orderFill', (fill: any) => {
-      addToast(`Trade executed: ${fill.side?.toUpperCase()} ${fill.amount} @ $${fill.price}`, 'success');
-      refreshPortfolio();
+    // Live price tick — update selected asset price for chart animation
+    sock.on('priceUpdate', (data: any) => {
+      if (data?.symbol !== symbol) return;
+      setSelectedAsset(prev => prev ? { ...prev, price: data.price, change24h: data.change24h } : prev);
+      setAssets(prev => prev.map(a =>
+        a.symbol === symbol ? { ...a, price: data.price, change24h: data.change24h } : a
+      ));
     });
 
     return () => {
-      sock.emit('unsubscribeOrderbook', { symbol: selectedAsset.symbol });
-      sock.emit('unsubscribeTrades',    { symbol: selectedAsset.symbol });
+      sock.emit('unsubscribeOrderbook', { symbol });
       sock.disconnect();
     };
   }, [selectedAsset?.symbol]);
@@ -258,6 +247,17 @@ const Trading: React.FC = () => {
     finally  { setIsChartLoading(false); }
   }, []);
 
+  // ── Order Book data ───────────────────────────────────────────────────────
+  const loadOrderBook = useCallback(async (symbol: string) => {
+    try {
+      const r: any = await tradingApi.getOrderBook(symbol, 30);
+      setOrderBookData({
+        asks: r.data?.asks || [],
+        bids: r.data?.bids || [],
+      });
+    } catch { /* silent */ }
+  }, []);
+
   // ── Orders ────────────────────────────────────────────────────────────────
   const loadOpenOrders = useCallback(async (symbol?: string) => {
     try {
@@ -278,17 +278,19 @@ const Trading: React.FC = () => {
     setSelectedAsset(asset);
     setShowAssetPanel(false);
     fetchChartData(asset.symbol, chartInterval);
+    loadOrderBook(asset.symbol);
     loadOpenOrders(asset.symbol);
     loadOrderHistory(asset.symbol);
-  }, [chartInterval, fetchChartData, loadOpenOrders, loadOrderHistory]);
+  }, [chartInterval, fetchChartData, loadOrderBook, loadOpenOrders, loadOrderHistory]);
 
   useEffect(() => {
     if (selectedAsset) {
       fetchChartData(selectedAsset.symbol, chartInterval);
+      loadOrderBook(selectedAsset.symbol);
       loadOpenOrders(selectedAsset.symbol);
       loadOrderHistory(selectedAsset.symbol);
     }
-  }, [selectedAsset?.symbol, chartInterval]);
+  }, [selectedAsset?.symbol, chartInterval, fetchChartData, loadOrderBook, loadOpenOrders, loadOrderHistory]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -638,6 +640,7 @@ const Trading: React.FC = () => {
                             asset={selectedAsset}
                             data={chartData}
                             onIntervalChange={label => setChartInterval(intervalLabelMap[label] || '1d')}
+                            livePrice={selectedAsset.price}
                           />
                         )}
                       </ChartErrorBoundary>
@@ -662,6 +665,10 @@ const Trading: React.FC = () => {
                         asks={orderBookData.asks}
                         bids={orderBookData.bids}
                         currentPrice={selectedAsset.price ?? 0}
+                        onLevelClick={(price) => {
+                          // Pre-fill trade form — handled inside TradeForm via asset.price
+                          setSelectedAsset(prev => prev ? { ...prev, price } : prev);
+                        }}
                       />
                     </div>
                     <div className="xl:col-span-2 min-w-0 w-full overflow-hidden">
