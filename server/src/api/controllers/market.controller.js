@@ -15,6 +15,18 @@ const ASSET_NAMES = {
   'LINK': 'Chainlink',         'UNI':  'Uniswap',         'ALGO': 'Algorand',
   'ICP':  'Internet Computer', 'FIL':  'Filecoin',        'TRX':  'TRON',
 };
+
+// Approximate circulating supply for market-cap estimation when exchange doesn't provide it
+const CIRCULATING_SUPPLY = {
+  BTC:  19_700_000,   ETH:   120_000_000,  USDT: 110_000_000_000,
+  BNB:   147_000_000, USDC:   35_000_000_000, XRP: 57_000_000_000,
+  ADA:  35_000_000_000, SOL: 460_000_000,   DOT: 1_400_000_000,
+  DOGE: 145_000_000_000, AVAX: 410_000_000, POL: 9_300_000_000,
+  LTC:   74_000_000,  ETC:   140_000_000,  LINK: 600_000_000,
+  UNI:   600_000_000, ALGO: 8_000_000_000, ICP:  500_000_000,
+  FIL:   500_000_000, TRX:  87_000_000_000,
+};
+
 const getAssetName = (symbol) => ASSET_NAMES[symbol] || symbol;
 
 class MarketController {
@@ -37,6 +49,7 @@ class MarketController {
         let priceValue   = 0;
         let changeValue  = 0;
         let volume24h    = null;
+        let marketCap    = null;
         let unavailable  = false;
 
         if (!data || data.price === null || data.price === undefined) {
@@ -44,9 +57,15 @@ class MarketController {
         } else if (typeof data === 'number') {
           priceValue = data;
         } else if (typeof data === 'object') {
-          priceValue  = Number(data.price)   || 0;
+          priceValue  = Number(data.price)    || 0;
           changeValue = Number(data.change24h) || 0;
           volume24h   = data.volume24h ?? null;
+          // Compute market cap: use exchange value if present, else supply * price
+          if (data.marketCap && data.marketCap > 0) {
+            marketCap = data.marketCap;
+          } else if (priceValue > 0 && CIRCULATING_SUPPLY[symbol]) {
+            marketCap = priceValue * CIRCULATING_SUPPLY[symbol];
+          }
           if (data.error) unavailable = true;
         }
 
@@ -60,7 +79,8 @@ class MarketController {
           price:            priceValue,
           change24h:        changeValue,
           volume24h,
-          priceUnavailable: unavailable,  // frontend uses this to show "—" instead of "$0"
+          marketCap,
+          priceUnavailable: unavailable,
         };
       });
 
@@ -75,10 +95,7 @@ class MarketController {
     try {
       const { symbols } = req.validatedData.query || {};
       const prices = await marketService.getMarketPrices(symbols);
-      res.json({
-        status: 'success',
-        data: prices
-      });
+      res.json({ status: 'success', data: prices });
     } catch (error) {
       next(error);
     }
@@ -88,10 +105,7 @@ class MarketController {
     try {
       const { symbol } = req.validatedData.params;
       const price = await marketService.getSymbolPrice(symbol);
-      res.json({
-        status: 'success',
-        data: price
-      });
+      res.json({ status: 'success', data: price });
     } catch (error) {
       next(error);
     }
@@ -102,10 +116,7 @@ class MarketController {
       const { symbol } = req.validatedData.params;
       const { interval, from, to } = req.validatedData.query || {};
       const history = await marketService.getPriceHistory(symbol, interval, from, to);
-      res.json({
-        status: 'success',
-        data: history
-      });
+      res.json({ status: 'success', data: history });
     } catch (error) {
       next(error);
     }
@@ -114,10 +125,7 @@ class MarketController {
   async getTrendingAssets(req, res, next) {
     try {
       const trending = await marketService.getTrendingAssets();
-      res.json({
-        status: 'success',
-        data: trending
-      });
+      res.json({ status: 'success', data: trending });
     } catch (error) {
       next(error);
     }
@@ -127,10 +135,7 @@ class MarketController {
     try {
       const { query, type } = req.validatedData.query || {};
       const results = await marketService.searchAssets(query, type);
-      res.json({
-        status: 'success',
-        data: results
-      });
+      res.json({ status: 'success', data: results });
     } catch (error) {
       next(error);
     }
@@ -140,88 +145,7 @@ class MarketController {
     try {
       const { symbol } = req.validatedData.params;
       const details = await marketService.getAssetDetails(symbol);
-      res.json({
-        status: 'success',
-        data: details
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async getWatchlist(req, res, next) {
-    try {
-      const watchlist = await marketService.getWatchlist(req.user.userId);
-      res.json({
-        status: 'success',
-        data: watchlist
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async addToWatchlist(req, res, next) {
-    try {
-      const { symbol } = req.validatedData.params;
-      await marketService.addToWatchlist(req.user.userId, symbol);
-      res.json({
-        status: 'success',
-        message: 'Asset added to watchlist'
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async removeFromWatchlist(req, res, next) {
-    try {
-      const { symbol } = req.validatedData.params;
-      await marketService.removeFromWatchlist(req.user.userId, symbol);
-      res.json({
-        status: 'success',
-        message: 'Asset removed from watchlist'
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async createPriceAlert(req, res, next) {
-    try {
-      const alert = await marketService.createPriceAlert(
-        req.user.userId,
-        req.validatedData.body
-      );
-      res.json({
-        status: 'success',
-        data: alert
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async getPriceAlerts(req, res, next) {
-    try {
-      const alerts = await marketService.getPriceAlerts(req.user.userId);
-      res.json({
-        status: 'success',
-        data: alerts
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async deletePriceAlert(req, res, next) {
-    try {
-      const { id } = req.validatedData.params;
-      await marketService.deletePriceAlert(req.user.userId, id);
-      res.json({
-        status: 'success',
-        message: 'Price alert deleted'
-      });
+      res.json({ status: 'success', data: details });
     } catch (error) {
       next(error);
     }
@@ -243,10 +167,6 @@ class MarketController {
         });
       }
 
-      const tf = timeframe.toLowerCase();
-      const multiplierMap = { '1h': 1 / 24, '24h': 1, '1d': 1, '7d': 7, '30d': 30 };
-      const mult = multiplierMap[tf] ?? 1;
-
       let totalVolume24h = 0;
       let topGainer = null;
       let topLoser  = null;
@@ -257,12 +177,47 @@ class MarketController {
         ([, d]) => d && typeof d === 'object' && d.price > 0,
       );
 
+      // ─── THIS LOOP WAS MISSING — now populates topGainer, topLoser, totalVolume ───
+      entries.forEach(([symbol, d]) => {
+        const change = typeof d.change24h === 'number' ? d.change24h : 0;
+        const vol    = typeof d.volume24h === 'number' ? d.volume24h : 0;
+        totalVolume24h += vol;
+
+        if (change > maxGain) {
+          maxGain   = change;
+          topGainer = { symbol, name: getAssetName(symbol), change: parseFloat(change.toFixed(2)) };
+        }
+        if (change < maxLoss) {
+          maxLoss  = change;
+          topLoser = { symbol, name: getAssetName(symbol), change: parseFloat(change.toFixed(2)) };
+        }
+      });
+
       const btcData = prices['BTC'] || {};
       const ethData = prices['ETH'] || {};
-      const totalMarketCap = entries.reduce((s, [, d]) => s + (d.marketCap || d.price * 1_000_000 || 0), 0);
 
-      // Simple Fear & Greed proxy: clamp BTC 24h change to 0-100 scale
-      const btcChange = btcData.change24h || 0;
+      // Market cap: use real supply-based estimates
+      const totalMarketCap = entries.reduce((s, [sym, d]) => {
+        const price = d.price || 0;
+        const mc    = (d.marketCap && d.marketCap > 0)
+          ? d.marketCap
+          : price * (CIRCULATING_SUPPLY[sym] || 0);
+        return s + mc;
+      }, 0);
+
+      const btcMarketCap = (btcData.marketCap && btcData.marketCap > 0)
+        ? btcData.marketCap
+        : (btcData.price || 0) * CIRCULATING_SUPPLY['BTC'];
+      const ethMarketCap = (ethData.marketCap && ethData.marketCap > 0)
+        ? ethData.marketCap
+        : (ethData.price || 0) * CIRCULATING_SUPPLY['ETH'];
+
+      const btcDominance = totalMarketCap > 0
+        ? parseFloat(((btcMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
+      const ethDominance = totalMarketCap > 0
+        ? parseFloat(((ethMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
+
+      const btcChange      = btcData.change24h || 0;
       const fearGreedIndex = Math.min(100, Math.max(0, Math.round(50 + btcChange * 2)));
       const fearGreedLabel =
         fearGreedIndex >= 75 ? 'Extreme Greed' :
@@ -270,18 +225,13 @@ class MarketController {
         fearGreedIndex >= 45 ? 'Neutral' :
         fearGreedIndex >= 25 ? 'Fear' : 'Extreme Fear';
 
-      const btcMarketCap  = btcData.marketCap  || btcData.price  * 19_000_000 || 0;
-      const ethMarketCap  = ethData.marketCap  || ethData.price  * 120_000_000 || 0;
-      const btcDominance  = totalMarketCap > 0 ? parseFloat(((btcMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
-      const ethDominance  = totalMarketCap > 0 ? parseFloat(((ethMarketCap / totalMarketCap) * 100).toFixed(1)) : 0;
-
       return res.json({
         status: 'success',
         data: {
           totalMarketCap,
-          volume24h: totalVolume24h,
-          topGainer,
-          topLoser,
+          volume24h:       totalVolume24h,
+          topGainer:       topGainer || { symbol: 'N/A', name: 'N/A', change: 0 },
+          topLoser:        topLoser  || { symbol: 'N/A', name: 'N/A', change: 0 },
           fearGreedIndex,
           fearGreedLabel,
           btcDominance,
@@ -289,28 +239,87 @@ class MarketController {
           altcoinDominance: parseFloat((100 - btcDominance - ethDominance).toFixed(1)),
           timeframe,
           lastUpdated: new Date().toISOString(),
-        }
+        },
       });
     } catch (error) {
       next(error);
     }
   }
+
   async getAvailableAssets(req, res, next) {
     try {
-      // Returns all tradeable assets grouped by type for the trading UI
       const assets = await marketService.getMarketAssets();
-      // Also include stock symbols for Pro users
       const stockSymbols = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'NFLX'];
-      const stockPrices = await marketService.getStockPrices(stockSymbols);
+      const stockPrices  = await marketService.getStockPrices(stockSymbols);
       const stocks = stockSymbols.map(sym => ({
-        id: sym.toLowerCase(),
-        symbol: sym,
-        name: sym,
-        type: 'stock',
-        price: stockPrices[sym]?.price ?? null,
+        id: sym.toLowerCase(), symbol: sym, name: sym, type: 'stock',
+        price:    stockPrices[sym]?.price    ?? null,
         change24h: stockPrices[sym]?.change24h ?? null,
       }));
       res.json({ status: 'success', data: { crypto: assets, stocks } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getWatchlist(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const watchlist = await marketService.getWatchlist(userId);
+      res.json({ status: 'success', data: watchlist });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async addToWatchlist(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const { symbol } = req.params;
+      const result = await marketService.addToWatchlist(userId, symbol);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async removeFromWatchlist(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const { symbol } = req.params;
+      const result = await marketService.removeFromWatchlist(userId, symbol);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async createPriceAlert(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const result = await marketService.createPriceAlert(userId, req.body);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getPriceAlerts(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const alerts = await marketService.getPriceAlerts(userId);
+      res.json({ status: 'success', data: alerts });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deletePriceAlert(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const { id } = req.params;
+      const result = await marketService.deletePriceAlert(userId, id);
+      res.json({ status: 'success', data: result });
     } catch (error) {
       next(error);
     }
