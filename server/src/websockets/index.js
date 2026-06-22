@@ -1,119 +1,59 @@
-const { Server } = require('socket.io');
-const MarketHandler = require('./handlers/market.handler');
-const TradingHandler = require('./handlers/trading.handler');
-const PortfolioHandler = require('./handlers/portfolio.handler');
-const NotificationHandler = require('./handlers/notification.handler');
-const DefiHandler = require('./handlers/defi.handler');
-const { logger } = require('../api/middlewares/logger.middleware');
-const jwt = require('jsonwebtoken');
-const config = require('../config');
+'use strict';
+const { Server }             = require('socket.io');
+const jwt                    = require('jsonwebtoken');
+const { logger }             = require('../api/middlewares/logger.middleware');
+const MarketHandler          = require('./handlers/market.handler');
+const TradingHandler         = require('./handlers/trading.handler');
+const NotificationHandler    = require('./handlers/notification.handler');
+const PortfolioHandler       = require('./handlers/portfolio.handler');
+const DefiHandler            = require('./handlers/defi.handler');
+const alertCheckJob          = require('../jobs/alertCheck.job');
 
-class WebSocketServer {
-  constructor(httpServer) {
-    this.io = new Server(httpServer, {
-      cors: {
-        origin: process.env.CORS_ORIGIN || '*',
-        methods: ['GET', 'POST'],
-        credentials: true
-      },
-      pingTimeout: 60000,
-      pingInterval: 25000
-    });
+function initWebSocket(server) {
+  const io = new Server(server, {
+    cors: {
+      origin:      process.env.CLIENT_URL || 'http://localhost:5173',
+      methods:     ['GET', 'POST'],
+      credentials: true,
+    },
+    pingTimeout:  30000,
+    pingInterval: 10000,
+  });
 
-    this.setupMiddleware();
-    this.initializeHandlers();
-  }
-
-  setupMiddleware() {
-    // Public namespaces — no auth required
-    const PUBLIC_NAMESPACES = ['/market'];
-
-    // Authentication middleware
-    this.io.use(async (socket, next) => {
-      // Skip auth for public namespaces
-      if (PUBLIC_NAMESPACES.includes(socket.nsp.name)) {
-        return next();
-      }
-
-      try {
-        const token = socket.handshake.auth.token;
-        if (!token) {
-          return next(new Error('Authentication required'));
-        }
-
-        const decoded = jwt.verify(token, config.jwt.secret);
-        socket.user = decoded;
-        next();
-      } catch (error) {
-        logger.error('WebSocket authentication error:', error);
-        next(new Error('Invalid token'));
-      }
-    });
-
-    // Logging middleware
-    this.io.use((socket, next) => {
-      logger.info(`New WebSocket connection: ${socket.id} on ${socket.nsp.name}`, {
-        userId: socket.user?.userId,
-        transport: socket.conn.transport.name
-      });
+  // Auth middleware for protected namespaces
+  const authMiddleware = (socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.replace('Bearer ', '');
+      if (!token) return next(new Error('Authentication required'));
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.user = decoded;
       next();
-    });
+    } catch {
+      next(new Error('Invalid token'));
+    }
+  };
 
-    // Error handling middleware
-    this.io.engine.on('connection_error', (err) => {
-      logger.error('WebSocket connection error:', err);
-    });
-  }
+  // Apply auth to protected namespaces
+  ['/trading', '/notifications', '/portfolio', '/defi'].forEach(ns => {
+    io.of(ns).use(authMiddleware);
+  });
 
-  initializeHandlers() {
-    this.marketHandler = new MarketHandler(this.io);
-    this.tradingHandler = new TradingHandler(this.io);
-    this.portfolioHandler = new PortfolioHandler(this.io);
-    this.notificationHandler = new NotificationHandler(this.io);
-    this.defiHandler = new DefiHandler(this.io);
+  // Initialise handlers
+  new MarketHandler(io);
+  new TradingHandler(io);
+  new NotificationHandler(io);
+  new PortfolioHandler(io);
+  new DefiHandler(io);
 
-    // Make handlers accessible
-    this.handlers = {
-      market: this.marketHandler,
-      trading: this.tradingHandler,
-      portfolio: this.portfolioHandler,
-      notification: this.notificationHandler,
-      defi: this.defiHandler
-    };
-  }
+  // ─── Wire alert-check job to io so bell notifications work ───────────────
+  alertCheckJob.setIo(io);
+  alertCheckJob.job.start();
+  logger.info('[WebSocket] Alert check job started and wired to socket.io');
 
-  // Helper method to broadcast system status
-  broadcastSystemStatus(status) {
-    this.io.emit('systemStatus', {
-      ...status,
-      timestamp: Date.now()
-    });
-  }
-
-  // Helper method to get connected clients count
-  getConnectedClientsCount() {
-    return this.io.engine.clientsCount;
-  }
-
-  // Helper method to get active namespaces
-  getActiveNamespaces() {
-    return Array.from(this.io._nsps.keys());
-  }
-
-  // Helper method to get room members
-  getRoomMembers(namespace, room) {
-    return this.io.of(namespace).adapter.rooms.get(room)?.size || 0;
-  }
-
-  // Helper method to disconnect all clients
-  disconnectAll(reason = 'Server shutdown') {
-    this.io.disconnectSockets(true, reason);
-  }
-
-  // Helper method to get handler instance
-  getHandler(type) {
-    return this.handlers[type];
-  }
+  logger.info('[WebSocket] All handlers initialized');
+  return io;
 }
 
-module.exports = WebSocketServer;
+module.exports = initWebSocket;
