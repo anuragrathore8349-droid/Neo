@@ -210,10 +210,10 @@ const DeFiOverview: React.FC = () => {
   useEffect(() => {
     const interval = setInterval(() => {
       gasPrices.refetch();
-    }, 60000); // 60 seconds
-
+    }, 60_000);
     return () => clearInterval(interval);
-  }, [gasPrices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // empty deps — gasPrices.refetch is stable
 
   // Fetch chart history for all active positions in one pass
   const fetchAllChartData = useCallback(async (positions: StakingPosition[]) => {
@@ -324,6 +324,14 @@ const DeFiOverview: React.FC = () => {
         protocolId: farm.protocol?.toLowerCase() || 'curve',
         farmId:     farm.id,
         walletAddress: getWalletAddress(),
+        network:    networkForParams,
+        metadata: {
+          action: 'harvest',
+          protocolId: farm.protocol?.toLowerCase() || 'curve',
+          asset: farm.rewardToken?.symbol || 'Reward',
+          network: networkForParams,
+          walletAddress: getWalletAddress()
+        }
       },
     });
   };
@@ -395,6 +403,14 @@ const DeFiOverview: React.FC = () => {
             token0Amount: amount,
             token1Amount: amount,  // equal split — user can refine in future
             network:      networkForParams,
+            metadata: {
+              action: 'addLiquidity',
+              protocolId: modalState.selectedData?.protocol?.toLowerCase().replace(' ', '') || 'uniswap',
+              asset: `${modalState.selectedData?.tokens?.[0]?.symbol || 'Token0'}-${modalState.selectedData?.tokens?.[1]?.symbol || 'Token1'}`,
+              amount,
+              network: networkForParams,
+              walletAddress: base.walletAddress
+            }
           },
         });
         break;
@@ -410,6 +426,14 @@ const DeFiOverview: React.FC = () => {
             poolId:    modalState.selectedData?.id,
             lpAmount:  amount,   // use lpAmount not amount
             network:   networkForParams,
+            metadata: {
+              action: 'removeLiquidity',
+              protocolId: modalState.selectedData?.protocol?.toLowerCase().replace(' ', '') || 'uniswap',
+              asset: `${modalState.selectedData?.tokens?.[0]?.symbol || 'Token0'}-${modalState.selectedData?.tokens?.[1]?.symbol || 'Token1'}`,
+              amount,
+              network: networkForParams,
+              walletAddress: base.walletAddress
+            }
           },
         });
         break;
@@ -425,6 +449,14 @@ const DeFiOverview: React.FC = () => {
             farmId:     modalState.selectedData?.id,
             amount,
             network:    networkForParams,
+            metadata: {
+              action: 'deposit',
+              protocolId: modalState.selectedData?.protocol?.toLowerCase() || 'curve',
+              asset: modalState.selectedData?.asset?.symbol || 'Asset',
+              amount,
+              network: networkForParams,
+              walletAddress: base.walletAddress
+            }
           },
         });
         break;
@@ -440,6 +472,14 @@ const DeFiOverview: React.FC = () => {
             farmId:     modalState.selectedData?.id,
             amount,
             network:    networkForParams,
+            metadata: {
+              action: 'withdraw',
+              protocolId: modalState.selectedData?.protocol?.toLowerCase() || 'curve',
+              asset: modalState.selectedData?.asset?.symbol || 'Asset',
+              amount,
+              network: networkForParams,
+              walletAddress: base.walletAddress
+            }
           },
         });
         break;
@@ -455,6 +495,14 @@ const DeFiOverview: React.FC = () => {
             positionId: modalState.selectedData?.id || modalState.selectedData?._id,
             amount,
             network:    networkForParams,
+            metadata: {
+              action: 'unstake',
+              protocolId: (modalState.selectedData?.protocol || 'lido').toLowerCase(),
+              asset: modalState.selectedData?.asset?.symbol || 'Asset',
+              amount,
+              network: networkForParams,
+              walletAddress: base.walletAddress
+            }
           },
         });
         break;
