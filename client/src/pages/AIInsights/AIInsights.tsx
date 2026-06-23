@@ -5,19 +5,22 @@ import SentimentCard from '../../components/ai/SentimentCard/SentimentCard';
 import PredictionCard from '../../components/ai/PredictionCard/PredictionCard';
 import StrategyCard from '../../components/ai/StrategyCard/StrategyCard';
 import MarketInsightCard from '../../components/ai/MarketInsightCard/MarketInsightCard';
-import { Brain, Target, TrendingUp, AlertTriangle, Lightbulb, LineChart as LineChartIcon } from 'lucide-react';
+import {
+  Brain, Target, TrendingUp, AlertTriangle, Lightbulb,
+  LineChart as LineChartIcon, RefreshCw, Zap, DollarSign
+} from 'lucide-react';
 import aiService from '../../services/ai.service';
 import { getMarketSummary } from '../../services/market.service';
 
-// Loading Skeleton Component
+// ─── Shared UI helpers ────────────────────────────────────────────────────────
+
 const LoadingSkeleton = () => (
   <div className="bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-6 animate-pulse">
-    <div className="h-64 bg-[#2A2B35]/50 rounded-lg"></div>
+    <div className="h-64 bg-[#2A2B35]/50 rounded-lg" />
   </div>
 );
 
-// Error Message Component
-const ErrorBoundary = ({ error, retryFn }: { error: string; retryFn: () => void }) => (
+const ErrorCard = ({ error, retryFn }: { error: string; retryFn: () => void }) => (
   <div className="bg-red-900/20 border border-red-500/50 rounded-xl p-6 text-red-200">
     <h3 className="font-semibold mb-2">Error Loading Data</h3>
     <p className="text-sm mb-4">{error}</p>
@@ -30,7 +33,6 @@ const ErrorBoundary = ({ error, retryFn }: { error: string; retryFn: () => void 
   </div>
 );
 
-// Data Source Badge Component
 const DataBadge = ({ source }: { source?: string }) => {
   if (!source) return null;
   const isLive = source === 'live' || source === 'kraken';
@@ -42,6 +44,118 @@ const DataBadge = ({ source }: { source?: string }) => {
     </span>
   );
 };
+
+// ─── NEW: Market Overview Panel ───────────────────────────────────────────────
+
+const MarketOverviewPanel: React.FC<{ data: any; loading: boolean }> = ({ data, loading }) => {
+  if (loading) return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {[1,2,3,4].map(i => (
+        <div key={i} className="bg-[#1A1B23]/60 border border-[#3D5AF1]/20 rounded-xl p-4 animate-pulse">
+          <div className="h-3 bg-gray-700 rounded w-1/2 mb-3" />
+          <div className="h-7 bg-gray-700 rounded w-3/4" />
+        </div>
+      ))}
+    </div>
+  );
+  if (!data) return null;
+
+  const stats = [
+    {
+      label: 'BTC Price',
+      value: data.spotPrices?.BTC?.price
+        ? `$${Number(data.spotPrices.BTC.price).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+        : '—',
+      sub: data.spotPrices?.BTC?.change24h != null
+        ? `${data.spotPrices.BTC.change24h > 0 ? '+' : ''}${Number(data.spotPrices.BTC.change24h).toFixed(2)}% 24h`
+        : '',
+      pos: (data.spotPrices?.BTC?.change24h ?? 0) >= 0
+    },
+    {
+      label: 'ETH Price',
+      value: data.spotPrices?.ETH?.price
+        ? `$${Number(data.spotPrices.ETH.price).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+        : '—',
+      sub: data.spotPrices?.ETH?.change24h != null
+        ? `${data.spotPrices.ETH.change24h > 0 ? '+' : ''}${Number(data.spotPrices.ETH.change24h).toFixed(2)}% 24h`
+        : '',
+      pos: (data.spotPrices?.ETH?.change24h ?? 0) >= 0
+    },
+    {
+      label: 'Fear & Greed',
+      value: data.fearGreed?.value != null ? String(data.fearGreed.value) : '—',
+      sub: data.fearGreed?.zone ?? '',
+      pos: (data.fearGreed?.value ?? 50) > 50
+    },
+    {
+      label: 'BTC Dominance',
+      value: data.dominance?.btcDominance != null ? `${data.dominance.btcDominance}%` : '—',
+      sub: data.dominance?.signal ?? '',
+      pos: true
+    }
+  ];
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {stats.map((s, i) => (
+        <div key={i} className="bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-4 hover:border-[#3D5AF1]/40 transition-all">
+          <div className="text-xs text-gray-400 mb-1">{s.label}</div>
+          <div className="text-2xl font-bold text-white">{s.value}</div>
+          {s.sub && <div className={`text-xs mt-1 ${s.pos ? 'text-green-400' : 'text-red-400'}`}>{s.sub}</div>}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── NEW: Investment Opportunities Panel ──────────────────────────────────────
+
+const OpportunitiesPanel: React.FC<{ data: any[]; loading: boolean; error: string | null; retry: () => void }> = ({ data, loading, error, retry }) => {
+  if (loading) return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {[1,2,3].map(i => <LoadingSkeleton key={i} />)}
+    </div>
+  );
+  if (error) return <ErrorCard error={error} retryFn={retry} />;
+  if (!data.length) return null;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {data.map((opp, i) => (
+        <div key={i} className="bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-5 hover:border-[#3D5AF1]/40 transition-all">
+          <div className="flex justify-between items-start mb-3">
+            <div>
+              <div className="text-lg font-bold text-white">{opp.symbol}</div>
+              <div className={`text-sm ${opp.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {opp.change24h > 0 ? '+' : ''}{opp.change24h}% 24h
+              </div>
+            </div>
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+              opp.riskLevel === 'high' ? 'bg-red-500/20 text-red-400' :
+              opp.riskLevel === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+              'bg-green-500/20 text-green-400'
+            }`}>
+              {opp.riskLevel} risk
+            </span>
+          </div>
+          <div className="text-sm text-gray-300 mb-3">{opp.reason}</div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>Score: {opp.opportunityScore}/100</span>
+            <span>${opp.currentPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+          </div>
+          <div className="mt-2 h-1.5 bg-gray-700 rounded-full">
+            <div
+              className="h-1.5 bg-[#3D5AF1] rounded-full transition-all"
+              style={{ width: `${opp.opportunityScore}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── Existing sub-components ──────────────────────────────────────────────────
+
 const DominanceBar: React.FC<{ data: any }> = ({ data }) => {
   if (!data) return null;
   return (
@@ -52,7 +166,6 @@ const DominanceBar: React.FC<{ data: any }> = ({ data }) => {
           {data.marketCapChange24h >= 0 ? '+' : ''}{data.marketCapChange24h}% 24h
         </span>
       </div>
-      {/* Stacked bar */}
       <div className="flex rounded-full overflow-hidden h-3 mb-3">
         <div style={{ width: `${data.btcDominance}%` }} className="bg-[#F7931A]" title={`BTC ${data.btcDominance}%`} />
         <div style={{ width: `${data.ethDominance}%` }} className="bg-[#627EEA]" title={`ETH ${data.ethDominance}%`} />
@@ -63,7 +176,7 @@ const DominanceBar: React.FC<{ data: any }> = ({ data }) => {
         <span><span className="text-[#627EEA]">●</span> ETH {data.ethDominance}%</span>
         <span><span className="text-[#3D5AF1]">●</span> Alts {data.altcoinDominance}%</span>
       </div>
-      <p className="text-xs text-gray-500 mt-2">{data.signal}</p>
+      {data.signal && <p className="text-xs text-gray-500 mt-2">{data.signal}</p>}
       <div className="flex justify-between text-xs text-gray-500 mt-2">
         <span>Market Cap: {data.totalMarketCapFormatted}</span>
         <span>Vol 24h: {data.totalVolumeFormatted}</span>
@@ -71,6 +184,7 @@ const DominanceBar: React.FC<{ data: any }> = ({ data }) => {
     </div>
   );
 };
+
 const FearGreedCard: React.FC<{ data: any; loading: boolean }> = ({ data, loading }) => {
   if (loading) return (
     <div className="bg-[#1A1B23]/60 border border-[#3D5AF1]/20 rounded-xl p-6 animate-pulse">
@@ -78,19 +192,17 @@ const FearGreedCard: React.FC<{ data: any; loading: boolean }> = ({ data, loadin
       <div className="h-16 bg-gray-700 rounded w-1/3 mx-auto" />
     </div>
   );
-
   if (!data) return null;
 
   const getColor = (value: number) => {
-    if (value >= 75) return '#FF4B4B';   // Extreme Greed — red
-    if (value >= 55) return '#FFB800';   // Greed — orange
-    if (value >= 45) return '#888888';   // Neutral — grey
-    if (value >= 25) return '#3D5AF1';   // Fear — blue
-    return '#22DFBF';                     // Extreme Fear — green (contrarian buy)
+    if (value >= 75) return '#FF4B4B';
+    if (value >= 55) return '#FFB800';
+    if (value >= 45) return '#888888';
+    if (value >= 25) return '#3D5AF1';
+    return '#22DFBF';
   };
-
   const color = getColor(data.value);
-  const rotation = (data.value / 100) * 180 - 90; // -90 to +90 degrees
+  const rotation = (data.value / 100) * 180 - 90;
 
   return (
     <div className="bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-6 hover:border-[#3D5AF1]/40 transition-all duration-300">
@@ -98,24 +210,14 @@ const FearGreedCard: React.FC<{ data: any; loading: boolean }> = ({ data, loadin
         <h3 className="text-lg font-semibold text-white">Fear & Greed Index</h3>
         <span className="text-xs px-2 py-1 rounded-full bg-green-500/20 text-green-400">● Live</span>
       </div>
-
-      {/* Gauge */}
       <div className="flex flex-col items-center mb-4">
         <div className="relative w-40 h-20 mb-2">
           <svg viewBox="0 0 200 110" className="w-full">
-            {/* Background arc */}
-            <path d="M 20 100 A 80 80 0 0 1 180 100"
-              fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="16" strokeLinecap="round" />
-            {/* Colored arc segments */}
-            <path d="M 20 100 A 80 80 0 0 1 60 36"
-              fill="none" stroke="#22DFBF" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
-            <path d="M 60 36 A 80 80 0 0 1 100 20"
-              fill="none" stroke="#3D5AF1" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
-            <path d="M 100 20 A 80 80 0 0 1 140 36"
-              fill="none" stroke="#888" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
-            <path d="M 140 36 A 80 80 0 0 1 180 100"
-              fill="none" stroke="#FFB800" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
-            {/* Needle */}
+            <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="16" strokeLinecap="round" />
+            <path d="M 20 100 A 80 80 0 0 1 60 36" fill="none" stroke="#22DFBF" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
+            <path d="M 60 36 A 80 80 0 0 1 100 20" fill="none" stroke="#3D5AF1" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
+            <path d="M 100 20 A 80 80 0 0 1 140 36" fill="none" stroke="#888" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
+            <path d="M 140 36 A 80 80 0 0 1 180 100" fill="none" stroke="#FFB800" strokeWidth="16" strokeLinecap="round" opacity="0.6" />
             <line
               x1="100" y1="100"
               x2={100 + 65 * Math.cos((rotation - 90) * Math.PI / 180)}
@@ -131,8 +233,6 @@ const FearGreedCard: React.FC<{ data: any; loading: boolean }> = ({ data, loadin
           {data.change > 0 ? '+' : ''}{data.change} from yesterday
         </div>
       </div>
-
-      {/* 7-day history */}
       {data.history?.length > 1 && (
         <div className="flex gap-1 justify-center mb-4">
           {data.history.slice(0, 7).reverse().map((h: any, i: number) => (
@@ -145,13 +245,11 @@ const FearGreedCard: React.FC<{ data: any; loading: boolean }> = ({ data, loadin
                   opacity: 0.7 + (i / 7) * 0.3
                 }}
               />
-              <span className="text-xs text-gray-600">{h.date.split(' ')[1]}</span>
+              <span className="text-xs text-gray-600">{h.date?.split(' ')[1] ?? ''}</span>
             </div>
           ))}
         </div>
       )}
-
-      {/* Advice */}
       <p className="text-xs text-gray-400 text-center leading-relaxed">{data.advice}</p>
       <p className="text-xs text-gray-600 text-center mt-2">Source: Alternative.me • Updates daily</p>
     </div>
@@ -163,13 +261,10 @@ const TrendingCoins: React.FC<{ coins: any[]; loading?: boolean }> = ({ coins, l
     <div className="bg-[#1A1B23]/60 border border-[#3D5AF1]/20 rounded-xl p-4 animate-pulse">
       <div className="h-4 bg-gray-700 rounded w-1/4 mb-3" />
       <div className="flex flex-wrap gap-2">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="px-3 py-1 rounded-full bg-gray-700 w-20 h-6" />
-        ))}
+        {[1,2,3,4,5].map(i => <div key={i} className="px-3 py-1 rounded-full bg-gray-700 w-20 h-6" />)}
       </div>
     </div>
   );
-  
   if (!coins?.length) return null;
   return (
     <div className="bg-[#1A1B23]/60 border border-[#3D5AF1]/20 rounded-xl p-4">
@@ -186,54 +281,111 @@ const TrendingCoins: React.FC<{ coins: any[]; loading?: boolean }> = ({ coins, l
   );
 };
 
+// ─── Main page component ──────────────────────────────────────────────────────
+
 const AIInsights: React.FC = () => {
-  // State for market summary data
+  // Market overview (new)
+  const [marketOverview, setMarketOverview] = useState<any>(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+
+  // Dominance (from market summary)
   const [marketSummaryData, setMarketSummaryData] = useState<any>(null);
   const [marketSummaryLoading, setMarketSummaryLoading] = useState(true);
 
-  // State for price predictions
+  // Price predictions chart
   const [pricePredictions, setPricePredictions] = useState<any>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
 
-  // State for risk assessment
+  // Risk assessment
   const [riskAssessment, setRiskAssessment] = useState<any>(null);
   const [riskLoading, setRiskLoading] = useState(false);
   const [riskError, setRiskError] = useState<string | null>(null);
 
-  // State for market sentiment
+  // Market sentiment
   const [sentiments, setSentiments] = useState<any[]>([]);
   const [sentimentLoading, setSentimentLoading] = useState(false);
   const [sentimentError, setSentimentError] = useState<string | null>(null);
 
-  // State for price predictions (for cards)
+  // Asset predictions (cards)
   const [assetPredictions, setAssetPredictions] = useState<any[]>([]);
   const [assetPredLoading, setAssetPredLoading] = useState(false);
   const [assetPredError, setAssetPredError] = useState<string | null>(null);
 
-  // State for strategies
+  // Strategies
   const [strategies, setStrategies] = useState<any[]>([]);
   const [strategiesLoading, setStrategiesLoading] = useState(false);
   const [strategiesError, setStrategiesError] = useState<string | null>(null);
 
-  // State for market insights
+  // Market insights (news)
   const [insights, setInsights] = useState<any[]>([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
 
-  // State for Fear & Greed Index
+  // Fear & Greed
   const [fearGreed, setFearGreed] = useState<any>(null);
   const [fearGreedLoading, setFearGreedLoading] = useState(true);
 
-  // State for BTC dominance
+  // BTC dominance
   const [btcDominance, setBtcDominance] = useState<any>(null);
-  const [dominanceLoading, setDominanceLoading] = useState(false);
 
-  // State for trending coins
+  // Trending coins
   const [trendingCoins, setTrendingCoins] = useState<any[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
 
-  // Helper: Get fear/greed label from numeric value
+  // Investment opportunities (new)
+  const [opportunities, setOpportunities] = useState<any[]>([]);
+  const [oppLoading, setOppLoading] = useState(false);
+  const [oppError, setOppError] = useState<string | null>(null);
+
+  // Global refresh state
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // ── Fetch functions ──────────────────────────────────────────────────────
+
+  const fetchMarketOverview = useCallback(async () => {
+    try {
+      setOverviewLoading(true);
+      const data = await aiService.getMarketOverview();
+      setMarketOverview(data);
+    } catch (err) {
+      console.warn('Market overview failed:', err);
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, []);
+
+  const fetchMarketSummary = useCallback(async () => {
+    try {
+      setMarketSummaryLoading(true);
+      const res = await getMarketSummary();
+      const d = res.data;
+      const fearGreedValue = d.fearGreedIndex ?? 50;
+
+      setMarketSummaryData({
+        btcDominance: d.btcDominance ?? 50,
+        ethDominance: 12,
+        altcoinDominance: parseFloat((100 - (d.btcDominance ?? 50) - 12).toFixed(1)),
+        marketCapChange24h: 0,
+        totalMarketCapFormatted: d.totalMarketCap ? `$${(d.totalMarketCap / 1e12).toFixed(2)}T` : 'N/A',
+        totalVolumeFormatted: d.volume24h ? `$${(d.volume24h / 1e9).toFixed(1)}B` : 'N/A',
+        signal: '',
+      });
+
+      setFearGreed(prev => prev || {
+        value: fearGreedValue,
+        zone: getFearGreedLabel(fearGreedValue),
+        change: 0,
+        history: [],
+        advice: 'Monitor market sentiment and adjust positions accordingly.',
+      });
+    } catch (e) {
+      console.warn('Market summary failed:', e);
+    } finally {
+      setMarketSummaryLoading(false);
+    }
+  }, []);
+
   function getFearGreedLabel(value: number) {
     if (value <= 25) return 'Extreme Fear';
     if (value <= 45) return 'Fear';
@@ -242,237 +394,144 @@ const AIInsights: React.FC = () => {
     return 'Extreme Greed';
   }
 
-  // Fetch market summary (BTC dominance, market cap, fear/greed index)
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchSummary() {
-      try {
-        setMarketSummaryLoading(true);
-        const res = await getMarketSummary();
-        if (!cancelled) {
-          const d = res.data;
-          const fearGreedValue = d.fearGreedIndex ?? 50;
-          
-          // Set dominance data
-          setMarketSummaryData({
-            btcDominance: d.btcDominance ?? 50,
-            ethDominance: 12, // not in API, approximate
-            altcoinDominance: (100 - (d.btcDominance ?? 50) - 12).toFixed(1),
-            marketCapChange24h: 0,
-            totalMarketCapFormatted: d.totalMarketCap
-              ? `$${(d.totalMarketCap / 1e12).toFixed(2)}T`
-              : 'N/A',
-            totalVolumeFormatted: d.volume24h
-              ? `$${(d.volume24h / 1e9).toFixed(1)}B`
-              : 'N/A',
-            signal: '',
-          });
-
-          // Set fear & greed data for FearGreedCard
-          setFearGreed({
-            value: fearGreedValue,
-            zone: getFearGreedLabel(fearGreedValue),
-            change: 0,
-            history: [],
-            advice: 'Monitor market sentiment and adjust positions accordingly.',
-          });
-        }
-      } catch (e) {
-        console.error('Market summary fetch failed', e);
-      } finally {
-        if (!cancelled) setMarketSummaryLoading(false);
-      }
-    }
-    fetchSummary();
-    const interval = setInterval(fetchSummary, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Fetch price predictions for chart
   const fetchPricePredictions = useCallback(async () => {
     try {
       setPriceLoading(true);
       setPriceError(null);
-      console.log('Fetching Bitcoin price predictions...');
-      
+      // horizon sent as plain number string — validator strips letters and parses
       const data = await aiService.getPricePredictions('BTC', '1d', '30');
-      
-      // Transform data for chart
-      if (data && data.predictions) {
-        const chartData = {
-          labels: data.predictions.map((_: any, i: number) => 
-            new Date(Date.now() + i * 86400000).toLocaleDateString('en-US', { 
-              month: 'short',
-              day: 'numeric'
-            })
+      if (data?.predictions) {
+        setPricePredictions({
+          labels: data.predictions.map((_: any, i: number) =>
+            new Date(Date.now() + i * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
           ),
-          datasets: [
-            {
-              label: 'Bitcoin Price Prediction',
-              data: data.predictions.map((p: any) => p.price || p),
-              borderColor: '#3D5AF1',
-              backgroundColor: 'rgba(61, 90, 241, 0.1)',
-              fill: true,
-              tension: 0.4,
-            }
-          ]
-        };
-        setPricePredictions(chartData);
-        console.log('Price predictions loaded successfully');
+          datasets: [{
+            label: 'BTC Price Prediction',
+            data: data.predictions.map((p: any) => p.price || p),
+            borderColor: '#3D5AF1',
+            backgroundColor: 'rgba(61, 90, 241, 0.1)',
+            fill: true,
+            tension: 0.4,
+          }]
+        });
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch price predictions';
-      setPriceError(errorMsg);
-      console.error('Error fetching price predictions:', error);
+    } catch (error: any) {
+      setPriceError(error.message || 'Failed to fetch price predictions');
     } finally {
       setPriceLoading(false);
     }
   }, []);
 
-  // Fetch risk assessment
   const fetchRiskAssessment = useCallback(async () => {
     try {
       setRiskLoading(true);
       setRiskError(null);
-      console.log('Fetching risk assessment...');
-      
-      const mockAssets = [
+
+      // Try real portfolio first, fall back to demo assets
+      let assets = [
         { symbol: 'BTC', amount: 0.5 },
         { symbol: 'ETH', amount: 10 },
         { symbol: 'USDC', amount: 5000 }
       ];
-      
-      const data = await aiService.getRiskAssessment(mockAssets, '30d');
-      
-      if (data && data.portfolio) {
-        setRiskAssessment(data.portfolio);
-        console.log('Risk assessment loaded successfully');
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch risk assessment';
-      setRiskError(errorMsg);
-      console.error('Error fetching risk assessment:', error);
+
+      try {
+        const portfolioData = await fetch('/api/portfolio/assets').then(r => r.json());
+        if (portfolioData.data?.length > 0) {
+          assets = portfolioData.data.map((a: any) => ({
+            symbol: a.symbol,
+            amount: parseFloat(a.quantity || a.value || '0') || 0
+          })).filter((a: any) => a.amount > 0);
+        }
+      } catch { /* use demo assets */ }
+
+      const data = await aiService.getRiskAssessment(assets, '30d');
+      if (data?.portfolio) setRiskAssessment(data.portfolio);
+    } catch (error: any) {
+      setRiskError(error.message || 'Failed to fetch risk assessment');
     } finally {
       setRiskLoading(false);
     }
   }, []);
 
-  // Fetch market sentiments
   const fetchMarketSentiments = useCallback(async () => {
     try {
       setSentimentLoading(true);
       setSentimentError(null);
-      console.log('Fetching market sentiments...');
-      
       const symbols = ['BTC', 'ETH', 'ADA'];
-      const sources = import.meta.env.VITE_ENABLE_AI_INSIGHTS === 'true'
-        ? 'technical,news,social'
-        : 'technical';
-      
+
       const sentimentData = await Promise.all(
-        symbols.map(symbol => 
-          aiService.getMarketSentiment(symbol, sources, '24h')
-            .catch(() => null)
+        symbols.map(symbol =>
+          aiService.getMarketSentiment(symbol, 'technical', '24h').catch(() => null)
         )
       );
 
-      const formattedSentiments = sentimentData
+      const formatted = sentimentData
         .map((data, i) => {
           if (!data) return null;
-          
-          // Convert 0-1 score to 0-100 percentage
-          const rawScore = data.overall?.score ?? 0.5;           // 0–1
-          const scorePercent = data.overall?.scorePercent        // use pre-computed if available
-                            ?? Math.round(rawScore * 100);       // else convert
-          
-          // Use real 7-day change if available, else proportional approximation
-          const change7d = data.overall?.change7d                // real 7-day change
-                        ?? ((rawScore - 0.5) * 20);              // proportional approximation if not
-          
+          const rawScore = data.overall?.score ?? 0.5;
+          const scorePercent = data.overall?.scorePercent ?? Math.round(rawScore * 100);
+          const change7d = data.overall?.change7d ?? ((rawScore - 0.5) * 20);
           return {
             sentiment: scorePercent > 60 ? 'positive' : scorePercent < 40 ? 'negative' : 'neutral',
-            score: scorePercent,   // now correctly in 0–100 range
+            score: scorePercent,
             change: parseFloat(change7d.toFixed(2)),
             asset: symbols[i]
           };
         })
         .filter(Boolean);
 
-      setSentiments(formattedSentiments);
-      console.log('Market sentiments loaded successfully');
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch sentiments';
-      setSentimentError(errorMsg);
-      console.error('Error fetching sentiments:', error);
+      setSentiments(formatted);
+    } catch (error: any) {
+      setSentimentError(error.message || 'Failed to fetch sentiments');
     } finally {
       setSentimentLoading(false);
     }
   }, []);
 
-  // Fetch asset price predictions (for cards)
   const fetchAssetPredictions = useCallback(async () => {
     try {
       setAssetPredLoading(true);
       setAssetPredError(null);
-      console.log('Fetching asset predictions...');
-      
       const symbols = ['BTC', 'ETH', 'SOL'];
       const predictions: any[] = [];
-      
-      // Fetch with delays to avoid rate limiting
+
       for (const symbol of symbols) {
         try {
+          // Use '7' (plain number) so validator passes max(90) check
           const pred = await aiService.getPricePredictions(symbol, '1d', '7');
           predictions.push(pred);
-        } catch (error) {
-          console.warn(`Failed to fetch prediction for ${symbol}:`, error);
+        } catch {
           predictions.push(null);
         }
-        // Add delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 400));
       }
 
-      // Format predictions for display
-      const formattedPredictions = predictions
+      const formatted = predictions
         .map((pred, i) => {
           if (!pred) return null;
           return {
             asset: symbols[i],
-            currentPrice: pred.currentPrice 
-                       ?? pred.predictions?.[0]?.price 
-                       ?? pred.average 
-                       ?? 0,
-            predictedPrice: pred.average 
-                         ?? pred.predictions?.slice(-1)[0]?.price 
-                         ?? 0,
+            currentPrice: pred.currentPrice ?? pred.predictions?.[0]?.price ?? 0,
+            predictedPrice: pred.average ?? pred.predictions?.slice(-1)[0]?.price ?? 0,
             confidence: pred.confidence || 75,
             timeframe: '7 Days'
           };
         })
         .filter(Boolean);
 
-      setAssetPredictions(formattedPredictions);
-      console.log('Asset predictions loaded successfully');
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch predictions';
-      setAssetPredError(errorMsg);
-      console.error('Error fetching asset predictions:', error);
+      setAssetPredictions(formatted);
+    } catch (error: any) {
+      setAssetPredError(error.message || 'Failed to fetch predictions');
     } finally {
       setAssetPredLoading(false);
     }
   }, []);
 
-  // Fetch strategy recommendations
   const fetchStrategies = useCallback(async () => {
     try {
       setStrategiesLoading(true);
       setStrategiesError(null);
-      console.log('Fetching strategy recommendations...');
-      
-      // Try to fetch real portfolio, fall back to mock if not available
+
       let portfolio = [
         { symbol: 'BTC', amount: 0.5 },
         { symbol: 'ETH', amount: 10 },
@@ -480,30 +539,23 @@ const AIInsights: React.FC = () => {
       ];
 
       try {
-        // Attempt to fetch real portfolio from server
         const portfolioData = await fetch('/api/portfolio/assets').then(r => r.json());
-        if (portfolioData.data && Array.isArray(portfolioData.data) && portfolioData.data.length > 0) {
+        if (portfolioData.data?.length > 0) {
           portfolio = portfolioData.data.map((asset: any) => ({
             symbol: asset.symbol,
             amount: asset.quantity || asset.value || 0
           }));
-          console.log('✓ Using real portfolio data');
         }
-      } catch {
-        console.log('Using mock portfolio (real portfolio unavailable)');
-      }
+      } catch { /* use demo portfolio */ }
 
-      const data = await aiService.getStrategyRecommendations(
-        portfolio,
-        {
-          riskTolerance: 0.7,
-          investmentHorizon: '180d',
-          strategy: 'mixed'
-        }
-      );
+      const data = await aiService.getStrategyRecommendations(portfolio, {
+        riskTolerance: 0.7,
+        investmentHorizon: '180d',
+        strategy: 'mixed'
+      });
 
-      if (data && data.strategies) {
-        const formattedStrategies = data.strategies.map((s: any) => ({
+      if (data?.strategies) {
+        setStrategies(data.strategies.map((s: any) => ({
           title: s.type?.replace(/_/g, ' ').toUpperCase() || 'Strategy',
           type: s.type || 'moderate',
           expectedReturn: s.expectedReturn || 15,
@@ -511,128 +563,101 @@ const AIInsights: React.FC = () => {
           timeframe: s.timeframe || '1-2 years',
           description: s.description || 'AI-generated strategy recommendation',
           actions: s.steps || []
-        }));
-        
-        setStrategies(formattedStrategies);
-        console.log('✓ Strategies loaded successfully:', formattedStrategies.length, 'strategies');
+        })));
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch strategies';
-      setStrategiesError(errorMsg);
-      console.error('Error fetching strategies:', error);
+    } catch (error: any) {
+      setStrategiesError(error.message || 'Failed to fetch strategies');
     } finally {
       setStrategiesLoading(false);
     }
   }, []);
 
-  // Helper to format relative time
   const formatRelativeTime = (timestamp: string | number) => {
     try {
-      const date = typeof timestamp === 'string' ? new Date(timestamp) : new Date(timestamp);
-      const now = new Date();
-      const secondsAgo = Math.floor((now.getTime() - date.getTime()) / 1000);
-      
+      const date = new Date(timestamp);
+      const secondsAgo = Math.floor((Date.now() - date.getTime()) / 1000);
       if (secondsAgo < 60) return 'Just now';
       if (secondsAgo < 3600) return `${Math.floor(secondsAgo / 60)}m ago`;
       if (secondsAgo < 86400) return `${Math.floor(secondsAgo / 3600)}h ago`;
-      if (secondsAgo < 604800) return `${Math.floor(secondsAgo / 86400)}d ago`;
-      return date.toLocaleDateString();
-    } catch {
-      return 'Recently';
-    }
+      return `${Math.floor(secondsAgo / 86400)}d ago`;
+    } catch { return 'Recently'; }
   };
 
-  // Fetch market insights/news analysis
   const fetchInsights = useCallback(async () => {
     try {
       setInsightsLoading(true);
       setInsightsError(null);
-      console.log('Fetching market insights...');
-      
-      const data = await aiService.analyzeNews('BTC,ETH,SOL', 'general,technical', '48h', 10);
-
+      // Use '24h' (not '48h') and 'general,technical' — both valid with fixed validator
+      const data = await aiService.analyzeNews('BTC,ETH,SOL', 'general,technical', '24h', 10);
       if (data) {
-        // Format insights from news analysis - handle both analysis and articles fields
         const analysisData = data.analysis || data.articles || [];
-        const formattedInsights = analysisData
-          .slice(0, 5)
-          .map((insight: any) => {
-            const rawConf = insight.confidence ?? 0.75;
-            return {
-              title: insight.title || 'Market Event',
-              description: insight.summary || insight.description || 'AI analysis of market developments',
-              impact: insight.sentiment === 'positive' ? 'positive' : insight.sentiment === 'negative' ? 'negative' : 'neutral',
-              confidence: rawConf <= 1 ? Math.round(rawConf * 100) : Math.round(rawConf),
-              tags: insight.tags || [insight.category || 'Market'],
-              timestamp: formatRelativeTime(insight.timestamp),
-              sentiment: insight.sentiment || 'neutral'
-            };
-          });
-
-        setInsights(formattedInsights);
-        console.log('✓ Insights loaded successfully:', formattedInsights.length, 'items');
+        setInsights(analysisData.slice(0, 5).map((insight: any) => {
+          const rawConf = insight.confidence ?? 0.75;
+          return {
+            title: insight.title || 'Market Event',
+            description: insight.summary || insight.description || 'AI analysis of market developments',
+            impact: insight.sentiment === 'positive' ? 'positive' : insight.sentiment === 'negative' ? 'negative' : 'neutral',
+            confidence: rawConf <= 1 ? Math.round(rawConf * 100) : Math.round(rawConf),
+            tags: insight.tags || [insight.category || 'Market'],
+            timestamp: formatRelativeTime(insight.timestamp),
+            sentiment: insight.sentiment || 'neutral'
+          };
+        }));
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to fetch insights';
-      setInsightsError(errorMsg);
-      console.error('Error fetching insights:', error);
+    } catch (error: any) {
+      setInsightsError(error.message || 'Failed to fetch insights');
     } finally {
       setInsightsLoading(false);
     }
   }, []);
 
-  // Fetch Fear & Greed Index
   const fetchFearGreed = useCallback(async () => {
     try {
       setFearGreedLoading(true);
       const data = await aiService.getFearGreedIndex();
       setFearGreed(data);
-    } catch (err) {
-      console.error('Fear & Greed fetch failed:', err);
-    } finally {
-      setFearGreedLoading(false);
-    }
+    } catch { /* fallback kept from market summary */ }
+    finally { setFearGreedLoading(false); }
   }, []);
 
-  // Fetch BTC dominance
   const fetchBTCDominance = useCallback(async () => {
     try {
-      setDominanceLoading(true);
       const data = await aiService.getBTCDominance();
       setBtcDominance(data);
-    } catch (err) {
-      console.error('BTC dominance fetch failed:', err);
-    } finally {
-      setDominanceLoading(false);
-    }
+    } catch { /* silent */ }
   }, []);
 
-  // Fetch trending coins
   const fetchTrendingCoins = useCallback(async () => {
     try {
       setTrendingLoading(true);
       const data = await aiService.getTrendingCoins();
       setTrendingCoins(Array.isArray(data) ? data : data?.data || []);
-    } catch (err) {
-      console.error('Trending coins fetch failed:', err);
-      // Fallback to mock data if service fails
-      const mockTrending = [
-        { symbol: 'BTC', name: 'Bitcoin' },
-        { symbol: 'ETH', name: 'Ethereum' },
-        { symbol: 'SOL', name: 'Solana' },
-        { symbol: 'ADA', name: 'Cardano' },
-        { symbol: 'XRP', name: 'Ripple' },
-        { symbol: 'DOGE', name: 'Dogecoin' },
-        { symbol: 'LINK', name: 'Chainlink' }
-      ];
-      setTrendingCoins(mockTrending);
+    } catch {
+      setTrendingCoins([
+        { symbol: 'BTC' }, { symbol: 'ETH' }, { symbol: 'SOL' },
+        { symbol: 'ADA' }, { symbol: 'XRP' }, { symbol: 'DOGE' }, { symbol: 'LINK' }
+      ]);
+    } finally { setTrendingLoading(false); }
+  }, []);
+
+  const fetchOpportunities = useCallback(async () => {
+    try {
+      setOppLoading(true);
+      setOppError(null);
+      const data = await aiService.getInvestmentOpportunities({ type: 'crypto', limit: 6 });
+      setOpportunities(data?.opportunities || []);
+    } catch (error: any) {
+      setOppError(error.message || 'Failed to fetch opportunities');
     } finally {
-      setTrendingLoading(false);
+      setOppLoading(false);
     }
   }, []);
 
-  // Load all data on component mount
+  // ── Initial load ──────────────────────────────────────────────────────────
+
   useEffect(() => {
+    fetchMarketOverview();
+    fetchMarketSummary();
     fetchPricePredictions();
     fetchRiskAssessment();
     fetchMarketSentiments();
@@ -642,88 +667,140 @@ const AIInsights: React.FC = () => {
     fetchFearGreed();
     fetchBTCDominance();
     fetchTrendingCoins();
+    fetchOpportunities();
   }, [
-    fetchPricePredictions,
-    fetchRiskAssessment,
-    fetchMarketSentiments,
-    fetchAssetPredictions,
-    fetchStrategies,
-    fetchInsights,
-    fetchFearGreed,
-    fetchBTCDominance,
-    fetchTrendingCoins
+    fetchMarketOverview, fetchMarketSummary, fetchPricePredictions, fetchRiskAssessment,
+    fetchMarketSentiments, fetchAssetPredictions, fetchStrategies, fetchInsights,
+    fetchFearGreed, fetchBTCDominance, fetchTrendingCoins, fetchOpportunities
   ]);
 
-  // Refresh live data every 5 minutes
+  // Auto-refresh live data every 5 minutes
   useEffect(() => {
-    const interval = setInterval(() => {
+    const id = setInterval(() => {
+      fetchMarketOverview();
       fetchMarketSentiments();
       fetchAssetPredictions();
       fetchInsights();
       fetchTrendingCoins();
       fetchBTCDominance();
+      fetchOpportunities();
     }, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchMarketSentiments, fetchAssetPredictions, fetchInsights, fetchTrendingCoins, fetchBTCDominance]);
+    return () => clearInterval(id);
+  }, [fetchMarketOverview, fetchMarketSentiments, fetchAssetPredictions, fetchInsights, fetchTrendingCoins, fetchBTCDominance, fetchOpportunities]);
 
-  // Refresh Fear & Greed every hour (it only updates daily)
+  // Fear & Greed refreshes hourly
   useEffect(() => {
-    fetchFearGreed();
-    const interval = setInterval(fetchFearGreed, 60 * 60 * 1000);
-    return () => clearInterval(interval);
+    const id = setInterval(fetchFearGreed, 60 * 60 * 1000);
+    return () => clearInterval(id);
   }, [fetchFearGreed]);
+
+  // ── Refresh All handler ───────────────────────────────────────────────────
+
+  const handleRefreshAll = useCallback(async () => {
+    setIsRefreshing(true);
+    await Promise.allSettled([
+      fetchMarketOverview(),
+      fetchMarketSummary(),
+      fetchPricePredictions(),
+      fetchRiskAssessment(),
+      fetchMarketSentiments(),
+      fetchAssetPredictions(),
+      fetchStrategies(),
+      fetchInsights(),
+      fetchFearGreed(),
+      fetchBTCDominance(),
+      fetchTrendingCoins(),
+      fetchOpportunities()
+    ]);
+    setIsRefreshing(false);
+  }, [
+    fetchMarketOverview, fetchMarketSummary, fetchPricePredictions, fetchRiskAssessment,
+    fetchMarketSentiments, fetchAssetPredictions, fetchStrategies, fetchInsights,
+    fetchFearGreed, fetchBTCDominance, fetchTrendingCoins, fetchOpportunities
+  ]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[rgb(40,43,55)] text-white p-6">
       <div className="max-w-7xl mx-auto space-y-8">
+
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <Brain className="w-8 h-8 text-[#3D5AF1]" />
-          <div>
-            <h1 className="text-3xl font-bold">AI Market Insights</h1>
-            <p className="text-gray-400 text-sm mt-1">Real-time ML-powered analysis and predictions</p>
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <Brain className="w-8 h-8 text-[#3D5AF1]" />
+            <div>
+              <h1 className="text-3xl font-bold">AI Market Insights</h1>
+              <p className="text-gray-400 text-sm mt-1">Real-time ML-powered analysis and predictions</p>
+            </div>
           </div>
+          {/* NEW: Refresh All button */}
+          <button
+            onClick={handleRefreshAll}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-[#3D5AF1]/20 hover:bg-[#3D5AF1]/30 border border-[#3D5AF1]/30 rounded-lg text-sm font-medium text-[#3D5AF1] transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh All'}
+          </button>
         </div>
 
-        {/* Main Grid */}
+        {/* NEW: Market Overview Panel */}
+        <MarketOverviewPanel data={marketOverview} loading={overviewLoading} />
+
+        {/* Price Predictions + Risk Assessment */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Price Predictions Section */}
           <div className="lg:col-span-2 bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-6">
             <div className="flex items-center gap-2 mb-6">
               <TrendingUp className="w-5 h-5 text-[#3D5AF1]" />
-              <h2 className="text-xl font-semibold">Price Predictions (180 Days)</h2>
+              <h2 className="text-xl font-semibold">Price Predictions (30 Days)</h2>
             </div>
             {priceLoading && <LoadingSkeleton />}
-            {priceError && <ErrorBoundary error={priceError} retryFn={fetchPricePredictions} />}
-            {pricePredictions && <LineChart data={pricePredictions} />}
+            {priceError && <ErrorCard error={priceError} retryFn={fetchPricePredictions} />}
+            {pricePredictions && !priceLoading && <LineChart data={pricePredictions} />}
           </div>
 
-          {/* Risk Assessment */}
           <div className="bg-[#1A1B23]/60 backdrop-blur-lg border border-[#3D5AF1]/20 rounded-xl p-6">
             <div className="flex items-center gap-2 mb-6">
               <AlertTriangle className="w-5 h-5 text-[#3D5AF1]" />
               <h2 className="text-xl font-semibold">Risk Assessment</h2>
             </div>
             {riskLoading && <LoadingSkeleton />}
-            {riskError && <ErrorBoundary error={riskError} retryFn={fetchRiskAssessment} />}
-            {riskAssessment && (
+            {riskError && <ErrorCard error={riskError} retryFn={fetchRiskAssessment} />}
+            {riskAssessment && !riskLoading && (
               <div className="flex justify-center">
                 <RiskGauge riskScore={riskAssessment.score || 50} />
               </div>
             )}
           </div>
         </div>
-        {/* Fear & Greed Index */}
+
+        {/* Fear & Greed */}
         <FearGreedCard data={fearGreed} loading={fearGreedLoading} />
 
         {/* BTC Dominance */}
-        {!marketSummaryLoading && marketSummaryData && <DominanceBar data={marketSummaryData} />}
+        {!marketSummaryLoading && btcDominance
+          ? <DominanceBar data={btcDominance} />
+          : !marketSummaryLoading && marketSummaryData
+          ? <DominanceBar data={marketSummaryData} />
+          : null}
 
-        {/* Trending Now */}
+        {/* Trending Coins */}
         <TrendingCoins coins={trendingCoins} loading={trendingLoading} />
 
+        {/* NEW: Investment Opportunities */}
+        {(oppLoading || opportunities.length > 0 || oppError) && (
+          <div>
+            <div className="flex items-center gap-2 mb-6">
+              <DollarSign className="w-5 h-5 text-[#3D5AF1]" />
+              <h2 className="text-xl font-semibold">Investment Opportunities<DataBadge source="live" /></h2>
+            </div>
+            <OpportunitiesPanel data={opportunities} loading={oppLoading} error={oppError} retry={fetchOpportunities} />
+          </div>
+        )}
+
         {/* Market Sentiment */}
-        {sentimentLoading || sentiments.length > 0 || sentimentError ? (
+        {(sentimentLoading || sentiments.length > 0 || sentimentError) && (
           <div>
             <div className="flex items-center gap-2 mb-6">
               <LineChartIcon className="w-5 h-5 text-[#3D5AF1]" />
@@ -731,30 +808,22 @@ const AIInsights: React.FC = () => {
             </div>
             {sentimentLoading && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <LoadingSkeleton />
-                <LoadingSkeleton />
-                <LoadingSkeleton />
+                <LoadingSkeleton /><LoadingSkeleton /><LoadingSkeleton />
               </div>
             )}
-            {sentimentError && <ErrorBoundary error={sentimentError} retryFn={fetchMarketSentiments} />}
+            {sentimentError && <ErrorCard error={sentimentError} retryFn={fetchMarketSentiments} />}
             {sentiments.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {sentiments.map((sentiment, i) => (
-                  <SentimentCard
-                    key={i}
-                    sentiment={sentiment.sentiment}
-                    score={sentiment.score}
-                    change={sentiment.change}
-                    asset={sentiment.asset}
-                  />
+                {sentiments.map((s, i) => (
+                  <SentimentCard key={i} sentiment={s.sentiment} score={s.score} change={s.change} asset={s.asset} />
                 ))}
               </div>
             )}
           </div>
-        ) : null}
+        )}
 
-        {/* AI-Powered Predictions */}
-        {assetPredLoading || assetPredictions.length > 0 || assetPredError ? (
+        {/* AI-Powered Predictions (7-day cards) */}
+        {(assetPredLoading || assetPredictions.length > 0 || assetPredError) && (
           <div>
             <div className="flex items-center gap-2 mb-6">
               <Lightbulb className="w-5 h-5 text-[#3D5AF1]" />
@@ -762,31 +831,22 @@ const AIInsights: React.FC = () => {
             </div>
             {assetPredLoading && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <LoadingSkeleton />
-                <LoadingSkeleton />
-                <LoadingSkeleton />
+                <LoadingSkeleton /><LoadingSkeleton /><LoadingSkeleton />
               </div>
             )}
-            {assetPredError && <ErrorBoundary error={assetPredError} retryFn={fetchAssetPredictions} />}
+            {assetPredError && <ErrorCard error={assetPredError} retryFn={fetchAssetPredictions} />}
             {assetPredictions.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {assetPredictions.map((pred, i) => (
-                  <PredictionCard
-                    key={i}
-                    asset={pred.asset}
-                    currentPrice={pred.currentPrice}
-                    predictedPrice={pred.predictedPrice}
-                    confidence={pred.confidence}
-                    timeframe={pred.timeframe}
-                  />
+                  <PredictionCard key={i} {...pred} />
                 ))}
               </div>
             )}
           </div>
-        ) : null}
+        )}
 
         {/* Strategy Recommendations */}
-        {strategiesLoading || strategies.length > 0 || strategiesError ? (
+        {(strategiesLoading || strategies.length > 0 || strategiesError) && (
           <div>
             <div className="flex items-center gap-2 mb-6">
               <Target className="w-5 h-5 text-[#3D5AF1]" />
@@ -794,24 +854,22 @@ const AIInsights: React.FC = () => {
             </div>
             {strategiesLoading && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <LoadingSkeleton />
-                <LoadingSkeleton />
-                <LoadingSkeleton />
+                <LoadingSkeleton /><LoadingSkeleton /><LoadingSkeleton />
               </div>
             )}
-            {strategiesError && <ErrorBoundary error={strategiesError} retryFn={fetchStrategies} />}
+            {strategiesError && <ErrorCard error={strategiesError} retryFn={fetchStrategies} />}
             {strategies.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {strategies.map((strategy, index) => (
-                  <StrategyCard key={index} {...strategy} />
+                {strategies.map((strategy, i) => (
+                  <StrategyCard key={i} {...strategy} />
                 ))}
               </div>
             )}
           </div>
-        ) : null}
+        )}
 
-        {/* Market Insights */}
-        {insightsLoading || insights.length > 0 || insightsError ? (
+        {/* Latest AI Insights (news) */}
+        {(insightsLoading || insights.length > 0 || insightsError) && (
           <div>
             <div className="flex items-center gap-2 mb-6">
               <Brain className="w-5 h-5 text-[#3D5AF1]" />
@@ -819,30 +877,29 @@ const AIInsights: React.FC = () => {
             </div>
             {insightsLoading && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <LoadingSkeleton />
-                <LoadingSkeleton />
+                <LoadingSkeleton /><LoadingSkeleton />
               </div>
             )}
-            {insightsError && <ErrorBoundary error={insightsError} retryFn={fetchInsights} />}
+            {insightsError && <ErrorCard error={insightsError} retryFn={fetchInsights} />}
             {insights.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {insights.map((insight, index) => (
-                  <MarketInsightCard key={index} {...insight} />
+                {insights.map((insight, i) => (
+                  <MarketInsightCard key={i} {...insight} />
                 ))}
               </div>
             )}
           </div>
-        ) : null}
+        )}
 
-        {/* Loading State Message */}
-        {priceLoading || riskLoading || sentimentLoading || assetPredLoading || strategiesLoading || insightsLoading ? (
+        {/* Global loading banner */}
+        {(priceLoading || riskLoading || sentimentLoading || assetPredLoading || strategiesLoading || insightsLoading) && (
           <div className="bg-blue-900/20 border border-blue-500/50 rounded-xl p-4 text-blue-200 text-sm">
             <div className="flex items-center gap-2">
-              <div className="animate-spin">⚡</div>
-              Loading AI insights from server... Please wait.
+              <Zap className="w-4 h-4 animate-pulse" />
+              Loading AI insights from live data sources…
             </div>
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
