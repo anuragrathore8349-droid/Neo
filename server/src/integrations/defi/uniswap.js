@@ -235,13 +235,17 @@ class UniswapIntegration {
 
       // Get position data from contract
       const position = await this.nfpm.positions(tokenId);
-      const liquidity = position.liquidity.toString();
+      
+      // Properly convert BigNumber values — ethers v5 returns BigNumber objects
+      const tokenIdBN = ethers.BigNumber.from(tokenId);
+      const liquidityBN = ethers.BigNumber.isBigNumber(position.liquidity) 
+        ? position.liquidity 
+        : ethers.BigNumber.from(position.liquidity);
 
+      const liquidity = liquidityBN.toString();
       if (liquidity === '0') throw new Error('Position has no liquidity');
 
-      const slippageBps = options.slippageBps || 50;
-      const deadline    = Math.floor(Date.now() / 1000) + (options.deadlineMinutes || 30) * 60;
-      const slippage    = (10000 - slippageBps);
+      const deadline = Math.floor(Date.now() / 1000) + (options.deadlineMinutes || 30) * 60;
 
       const iface = new ethers.utils.Interface([
         'function decreaseLiquidity((uint256 tokenId, uint128 liquidity, uint256 amount0Min, uint256 amount1Min, uint256 deadline) params) external payable returns (uint256 amount0, uint256 amount1)',
@@ -249,19 +253,19 @@ class UniswapIntegration {
         'function multicall(bytes[] data) external payable returns (bytes[] results)',
       ]);
 
-      const MAX_UINT128 = '340282366920938463463374607431768211455';
+      const MAX_UINT128 = ethers.BigNumber.from('340282366920938463463374607431768211455');
 
       // Encode both calls for multicall
       const decreaseData = iface.encodeFunctionData('decreaseLiquidity', [{
-        tokenId:    tokenId.toString(),
-        liquidity,
-        amount0Min: '0',
-        amount1Min: '0',
-        deadline:   deadline.toString(),
+        tokenId:    tokenIdBN,
+        liquidity:  liquidityBN,
+        amount0Min: ethers.constants.Zero,
+        amount1Min: ethers.constants.Zero,
+        deadline:   ethers.BigNumber.from(deadline),
       }]);
 
       const collectData = iface.encodeFunctionData('collect', [{
-        tokenId:    tokenId.toString(),
+        tokenId:    tokenIdBN,
         recipient:  checksummedUser,
         amount0Max: MAX_UINT128,
         amount1Max: MAX_UINT128,
