@@ -18,7 +18,7 @@ router.get('/sentiment/:symbol',
   aiController.getMarketSentiment
 );
 
-// Risk assessment
+// Risk assessment (body contains assets array)
 router.post('/risk/assessment',
   validateRequest(aiSchemas.getRiskAssessment),
   aiController.getRiskAssessment
@@ -62,16 +62,20 @@ router.post('/anomalies',
 router.post('/anomalies/detect',
   validateRequest(aiSchemas.detectAnomalies),
   aiController.detectAnomalies
-); // backwards compatibility
+);
 
-// Personalized insights
+// Personalized insights — requires auth (userId comes from JWT)
 router.get('/insights',
   authMiddleware,
   aiController.getPersonalizedInsights
 );
 
-// Fear & Greed Index — no validation needed, no params
+// Public market data endpoints — no auth required
 router.get('/fear-greed', aiController.getFearGreedIndex);
 router.get('/market/dominance', aiController.getBTCDominance);
 router.get('/trending-coins', aiController.getTrendingCoins);
+
+// NEW: bundled market overview (fear/greed + dominance + trending + prices)
+router.get('/market/overview', aiController.getMarketOverview);
+
 module.exports = router;
