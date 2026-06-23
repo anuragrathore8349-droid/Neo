@@ -12,10 +12,11 @@ const aiSchemas = {
       horizon: z.string()
         .transform(str => {
           // Handle both "7" and "7d" formats
-          const num = parseInt(str.replace(/[a-z]/i, ''));
+          const num = parseInt(str.replace(/[a-z]/gi, ''));
           return isNaN(num) ? 7 : num;
         })
-        .pipe(z.number().int().min(1).max(30))
+        // Allow up to 90 days (service supports up to 90)
+        .pipe(z.number().int().min(1).max(90))
         .default(7)
     })
   }),
@@ -28,7 +29,7 @@ const aiSchemas = {
       sources: z.string()
         .transform(str => str.split(',').map(s => s.trim()))
         .pipe(z.array(z.enum(['news', 'social', 'technical', 'onchain'])))
-        .default(['news', 'social']),
+        .default(['technical']),
       timeframe: z.string()
         .regex(/^\d+[hdwm]$/)
         .default('24h')
@@ -39,8 +40,9 @@ const aiSchemas = {
     body: z.object({
       assets: z.array(z.object({
         symbol: z.string(),
-        amount: z.number().positive()
-      })),
+        // Allow very small crypto amounts (e.g. 0.001 BTC)
+        amount: z.number().min(0)
+      })).min(1, 'At least one asset required'),
       timeframe: z.string()
         .regex(/^\d+[hdwm]$/)
         .default('30d')
@@ -72,20 +74,12 @@ const aiSchemas = {
     body: z.object({
       assets: z.array(z.object({
         symbol: z.string(),
-        amount: z.number().positive()
+        amount: z.number().min(0)
       })),
       constraints: z.object({
-        riskTolerance: z.number()
-          .min(0)
-          .max(1),
-        minAllocation: z.number()
-          .min(0)
-          .max(1)
-          .optional(),
-        maxAllocation: z.number()
-          .min(0)
-          .max(1)
-          .optional()
+        riskTolerance: z.number().min(0).max(1),
+        minAllocation: z.number().min(0).max(1).optional(),
+        maxAllocation: z.number().min(0).max(1).optional()
       }),
       objective: z.enum(['sharpe', 'return', 'risk'])
         .default('sharpe')
@@ -96,20 +90,16 @@ const aiSchemas = {
     body: z.object({
       portfolio: z.array(z.object({
         symbol: z.string(),
-        amount: z.number().positive(),
-        type: z.enum(['crypto','stock','commodity','forex']).optional()
+        amount: z.number().min(0),
+        type: z.enum(['crypto', 'stock', 'commodity', 'forex']).optional()
       }).transform(obj => ({
         ...obj,
         type: obj.type ?? inferAssetType(obj.symbol)
       }))),
       preferences: z.object({
-        riskTolerance: z.number()
-          .min(0)
-          .max(1),
-        investmentHorizon: z.string()
-          .regex(/^\d+[hdwm]$/),
-        strategy: z.enum(['passive', 'active', 'mixed'])
-          .default('mixed')
+        riskTolerance: z.number().min(0).max(1),
+        investmentHorizon: z.string().regex(/^\d+[hdwm]$/),
+        strategy: z.enum(['passive', 'active', 'mixed']).default('mixed')
       })
     })
   }),
@@ -124,12 +114,8 @@ const aiSchemas = {
       patterns: z.string()
         .transform(str => str.split(',').map(s => s.trim()))
         .pipe(z.array(z.enum([
-          'double_top',
-          'double_bottom',
-          'head_shoulders',
-          'triangle',
-          'wedge',
-          'channel'
+          'double_top', 'double_bottom', 'head_shoulders',
+          'triangle', 'wedge', 'channel', 'all'
         ])))
         .optional()
     })
@@ -140,9 +126,10 @@ const aiSchemas = {
       symbols: z.string()
         .transform(str => str.split(',').map(s => s.trim()))
         .optional(),
+      // Categories is now a free-form string list — we just split it
+      // (removes the enum restriction that was rejecting valid values)
       categories: z.string()
         .transform(str => str.split(',').map(s => s.trim()))
-        .pipe(z.array(z.enum(['general', 'technical', 'fundamental', 'regulatory'])))
         .optional(),
       timeframe: z.string()
         .regex(/^\d+[hdwm]$/)
@@ -161,13 +148,8 @@ const aiSchemas = {
         symbol: z.string(),
         metrics: z.record(z.number())
       })).optional(),
-      sensitivity: z.number()
-        .min(0)
-        .max(1)
-        .default(0.5),
-      timeframe: z.string()
-        .regex(/^\d+[hdwm]$/)
-        .default('7d')
+      sensitivity: z.number().min(0).max(1).default(0.5),
+      timeframe: z.string().regex(/^\d+[hdwm]$/).default('7d')
     }).transform(body => ({
       data: body.data ?? (body.assets ?? []).map(s => ({ symbol: s, metrics: {} })),
       sensitivity: body.sensitivity,
