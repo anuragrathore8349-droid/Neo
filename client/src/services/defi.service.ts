@@ -739,19 +739,10 @@ class DefiService {
   }
 
   /**
-   * Fetch token metadata and icon from CoinGecko
-   * Returns icon URL for the given token address (ERC-20)
+   * Get token icon from local map (no API call — route doesn't exist on backend)
    */
   async getTokenIcon(tokenAddress: string): Promise<string> {
-    try {
-      const response = await apiFetch<{ data: { icon: string } }>(
-        `/api/defi/token-icon/${tokenAddress}`
-      );
-      return response.data?.icon || this.getDefaultTokenIcon(tokenAddress);
-    } catch (error) {
-      console.error(`Error fetching token icon for ${tokenAddress}:`, error);
-      return this.getDefaultTokenIcon(tokenAddress);
-    }
+    return this.getDefaultTokenIcon(tokenAddress);
   }
 
   /**
