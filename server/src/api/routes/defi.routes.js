@@ -101,6 +101,10 @@ router.get('/stats',
   defiController.getDefiStats
 );
 
+// New: per-user portfolio summary (total value, total rewards, active positions)
+router.get('/portfolio-summary',
+  defiController.getDefiStats  // reuses getDefiStats — already per-user
+);
 
 // Returns unsigned transaction for MetaMask to sign
 router.post('/build-tx',
