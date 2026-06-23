@@ -38,6 +38,15 @@ export const WalletTxModal: React.FC<WalletTxModalProps> = ({
   const [txHash,  setTxHash]  = useState('');
   const [errorMsg,setErrorMsg]= useState('');
 
+  // Reset state whenever modal opens with a new action
+  React.useEffect(() => {
+    if (isOpen) {
+      setStep('idle');
+      setTxHash('');
+      setErrorMsg('');
+    }
+  }, [isOpen, action]);
+
   if (!isOpen) return null;
 
   const network = (params?.metadata?.network || 'ethereum').toLowerCase();
@@ -253,7 +262,11 @@ export const WalletTxModal: React.FC<WalletTxModalProps> = ({
                   Close
                 </button>
                 <button
-                  onClick={() => { setStep('idle'); setErrorMsg(''); setTxHash(''); }}
+                  onClick={() => {
+                    setTxHash('');
+                    setErrorMsg('');
+                    setStep('idle');
+                  }}
                   className="flex-1 bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl text-sm font-semibold transition-colors"
                 >
                   Retry
