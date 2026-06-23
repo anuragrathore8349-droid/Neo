@@ -204,9 +204,11 @@ class DefiService {
 
   async fetchCurveProtocol () {
     try {
-      const resp = await axios.get(this.thegraphEndpoints.curve, { timeout: 6000 });
+      // Use Curve REST API directly (TheGraph subgraph for Curve is deprecated)
+      const resp = await axios.get('https://api.curve.fi/api/getPools/ethereum/main', { timeout: 8000 });
       const pools = resp.data?.data?.poolData || [];
-      const tvl = pools.reduce((s, p) => s + (p.usdTotal || 0), 0);
+      if (!pools.length) throw new Error('No Curve pools returned');
+      const tvl = pools.reduce((s, p) => s + (parseFloat(p.usdTotal) || 0), 0);
       const curveApy = await this.fetchCurveAPY();
       return {
         id: 'curve', name: 'Curve Finance', type: 'dex',
@@ -278,27 +280,29 @@ class DefiService {
       throw new Error('protocol, asset, amount, and walletAddress are required');
     }
 
-    // Record the position intent in DB (actual on-chain tx is initiated from frontend via MetaMask)
     const position = await DefiPosition.create({
       userId,
       protocol,
-      asset,
-      amount: parseFloat(amount),
+      protocolId: protocol,
+      asset: {
+        symbol:  typeof asset === 'string' ? asset : (asset.symbol || 'ETH'),
+        amount:  parseFloat(amount),
+        address: typeof asset === 'object' ? (asset.address || '') : ''
+      },
+      type:         'staking',
+      status:       'pending',
       walletAddress,
-      type: 'staking',
-      status: 'pending',
-      stakedAt: new Date(),
+      startedAt:    new Date(),
     });
 
-    // Emit event so frontend knows to prompt MetaMask
     if (global.defiHandler) {
       global.defiHandler.broadcastPositionUpdate(userId, position);
     }
 
     return {
-      positionId: position._id,
-      status: 'pending_onchain',
-      message: `Please confirm the staking transaction in your wallet for ${amount} ${asset} on ${protocol}`,
+      positionId:  position._id,
+      status:      'pending_onchain',
+      message:     `Please confirm the staking transaction in your wallet for ${amount} on ${protocol}`,
     };
   }
 
@@ -459,37 +463,37 @@ class DefiService {
     const { positionId, walletAddress } = rewardsData;
     if (!positionId || typeof positionId !== 'string') throw new Error('Position ID is required');
 
-    // Reject opportunity IDs (not real MongoDB ObjectIds)
     const mongoose = require('mongoose');
     if (!mongoose.Types.ObjectId.isValid(positionId)) {
       throw new Error('Cannot claim rewards on available opportunities. Please stake first.');
     }
 
+    // Guard against querying yield_farm records by mistake — only accept staking type
     const position = await DefiPosition.findOne({ _id: positionId, userId, type: 'staking' });
     if (!position) throw new Error('Position not found');
+    if (position.status === 'completed' || position.status === 'closed') {
+      throw new Error('This position is already closed');
+    }
 
-    const symbol = position.asset?.symbol || 'Unknown';
+    const symbol  = position.asset?.symbol || 'Unknown';
     const address = (SYMBOL_TO_ADDRESS[symbol] || '').toLowerCase();
-    const prices = await this.getTokenPricesBatch([address]);
-    const tokenPrice = prices[address] || 0;
-    const amount = parseFloat(position.asset?.amount || 0);
+    const prices  = await this.getTokenPricesBatch([address]);
+    const tokenPrice  = prices[address] || 0;
+    const amount      = parseFloat(position.asset?.amount || 0);
     const positionValue = amount * tokenPrice;
-    const apy = parseFloat(position.apy || 0);
+    const apy         = parseFloat(position.apy || 0);
 
-    // Calculate ONLY since last claim (not since staking started)
-    const since = position.lastClaimedAt || position.startedAt || position.createdAt || new Date();
+    const since     = position.lastClaimedAt || position.startedAt || position.createdAt || new Date();
     const daysSince = Math.max(0, (Date.now() - new Date(since).getTime()) / 86400000);
     const rewardAmount = Math.max(0, positionValue * (apy / 100) / 365 * daysSince);
 
-    // Record the claim
     if (!position.rewards) position.rewards = [];
     position.rewards.push({ symbol, amount: rewardAmount, address, claimedAt: new Date() });
     position.lastClaimedAt = new Date();
     await position.save();
 
-    // Actual on-chain claim tx is handled by WalletTxModal on the frontend
     return {
-      claimedAmount: this.formatUSD(rewardAmount),
+      claimedAmount:    this.formatUSD(rewardAmount),
       newRewardBalance: '$0'
     };
   }
@@ -884,11 +888,25 @@ class DefiService {
     const { farmId, amount, walletAddress } = farmData;
     if (!farmId || !amount || !walletAddress) throw new Error('Missing required fields');
 
-    let pos = await DefiPosition.findOne({ userId, type: 'farming', 'farmData.farmId': farmId, status: 'active' });
+    let pos = await DefiPosition.findOne({
+      userId,
+      type: 'farming',
+      'farmData.farmId': farmId,
+      status: 'active'
+    });
     if (pos) {
       pos.farmData.amount = (parseFloat(pos.farmData?.amount || 0) + parseFloat(amount)).toString();
     } else {
-      pos = new DefiPosition({ userId, protocolId: 'farm', type: 'farming', farmData: { farmId, amount: amount.toString(), stakedAt: new Date() }, walletAddress, status: 'active' });
+      pos = new DefiPosition({
+        userId,
+        protocolId:   'farm',
+        protocol:     farmData.protocolId || 'farm',
+        type:         'farming',
+        asset: { symbol: 'LP', amount: parseFloat(amount), address: '' },
+        farmData:     { farmId, amount: amount.toString(), stakedAt: new Date() },
+        walletAddress,
+        status:       'active'
+      });
     }
     await pos.save();
     return { positionId: pos._id, deposited: amount };
