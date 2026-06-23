@@ -71,35 +71,64 @@ defiQueue.process('claimRewards', async (job) => {
 });
 
 // ─── Update a single position's value in DB ───────────────────────────────
-async function updatePosition(position) {
+async function updatePosition (position) {
   try {
-    const assetSymbol = position.asset?.symbol;
+    // Support both old flat schema (asset: String) and new nested (asset: { symbol })
+    const assetSymbol = (typeof position.asset === 'string')
+      ? position.asset
+      : position.asset?.symbol;
+
     if (!assetSymbol) return;
 
     const coinId = symbolToCoinId(assetSymbol);
     const price  = await priceService.getPrice(coinId);
     if (!price) return;
 
-    const amount = parseFloat(position.asset?.amount || 0);
+    // Support both old flat amount and new nested asset.amount
+    const amount = (typeof position.asset === 'string')
+      ? (position.amount || 0)
+      : parseFloat(position.asset?.amount || 0);
+
     const currentValue = amount * price;
 
-    const apy = position.apy || 0;
-    const daysSince = (Date.now() - (position.lastClaimedAt || position.startedAt || position.createdAt)) / 86400000;
-    const accruedReward = currentValue * (apy / 100) / 365 * Math.max(0, daysSince);
+    const apy       = position.apy || 0;
+    const since     = position.lastClaimedAt || position.startedAt || position.createdAt || new Date();
+    const daysSince = Math.max(0, (Date.now() - new Date(since).getTime()) / 86400000);
+    const accruedReward = currentValue * (apy / 100) / 365 * daysSince;
 
     await DefiPosition.findByIdAndUpdate(position._id, {
       'asset.currentValue': currentValue,
-      'rewards.accrued':    accruedReward,
       lastUpdated:          new Date()
     });
 
     // Store daily chart point
     try {
-      const chart = await DefiChart.findOne({ entityId: position._id.toString(), entityType: 'staking', metric: 'price' })
-        || new DefiChart({ entityId: position._id.toString(), entityType: 'staking', metric: 'price', data: [] });
-      const today = new Date(); today.setHours(0,0,0,0);
-      const exists = chart.data.some(d => { const dd = new Date(d.date); dd.setHours(0,0,0,0); return dd.getTime() === today.getTime(); });
-      if (!exists) { chart.data.push({ date: today, value: currentValue }); if (chart.data.length > 90) chart.data.shift(); await chart.save(); }
+      const DefiChart = require('../models/defi-chart.model');
+      let chart = await DefiChart.findOne({
+        entityId:   position._id.toString(),
+        entityType: 'staking',
+        metric:     'price'
+      });
+      if (!chart) {
+        chart = new DefiChart({
+          entityId:   position._id.toString(),
+          entityType: 'staking',
+          metric:     'price',
+          data:       []
+        });
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const exists = chart.data.some(d => {
+        const dd = new Date(d.date);
+        dd.setHours(0, 0, 0, 0);
+        return dd.getTime() === today.getTime();
+      });
+      if (!exists) {
+        chart.data.push({ date: today, value: currentValue });
+        if (chart.data.length > 90) chart.data.shift();
+        await chart.save();
+      }
     } catch (_) {}
   } catch (err) {
     logger.error(`updatePosition failed for ${position._id}:`, err.message);
