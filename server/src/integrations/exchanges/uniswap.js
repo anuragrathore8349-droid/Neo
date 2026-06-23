@@ -279,19 +279,36 @@ class UniswapIntegration {
       // Get position data
       const positionData = await nfpm.positions(tokenId);
 
+      // Properly convert BigNumber values
+      const tokenIdBN = ethers.BigNumber.from(tokenId);
+      const liquidityBN = ethers.BigNumber.isBigNumber(positionData.liquidity)
+        ? positionData.liquidity
+        : ethers.BigNumber.from(positionData.liquidity);
+
+      const tokensOwed0BN = ethers.BigNumber.isBigNumber(positionData.tokensOwed0)
+        ? positionData.tokensOwed0
+        : ethers.BigNumber.from(positionData.tokensOwed0);
+
+      const tokensOwed1BN = ethers.BigNumber.isBigNumber(positionData.tokensOwed1)
+        ? positionData.tokensOwed1
+        : ethers.BigNumber.from(positionData.tokensOwed1);
+
       const deadline = Math.floor(Date.now() / 1000) + (options.slippageTolerance || 60);
-      const amount0Min = BigInt(positionData.tokensOwed0) * BigInt(100 - (options.minSlippage || 0.5)) / BigInt(100);
-      const amount1Min = BigInt(positionData.tokensOwed1) * BigInt(100 - (options.minSlippage || 0.5)) / BigInt(100);
+      const minSlippage = options.minSlippage || 0.5;
+      
+      // Calculate min amounts with slippage
+      const amount0Min = tokensOwed0BN.mul(100 - minSlippage).div(100);
+      const amount1Min = tokensOwed1BN.mul(100 - minSlippage).div(100);
 
       const iface = new ethers.utils.Interface(this.NFPM_ABI);
 
-      // Build decreaseLiquidity calldata
+      // Build decreaseLiquidity calldata using BigNumber objects
       const decreaseLiquidityParams = {
-        tokenId: tokenId.toString(),
-        liquidity: positionData.liquidity.toString(),
-        amount0Min: amount0Min.toString(),
-        amount1Min: amount1Min.toString(),
-        deadline: deadline.toString(),
+        tokenId: tokenIdBN,
+        liquidity: liquidityBN,
+        amount0Min: amount0Min,
+        amount1Min: amount1Min,
+        deadline: ethers.BigNumber.from(deadline),
       };
 
       const decreaseLiquidityData = iface.encodeFunctionData('decreaseLiquidity', [
@@ -299,11 +316,12 @@ class UniswapIntegration {
       ]);
 
       // Build collect calldata
+      const MAX_UINT128 = ethers.BigNumber.from('340282366920938463463374607431768211455');
       const collectParams = {
-        tokenId: tokenId.toString(),
-        recipient: address,
-        amount0Max: '340282366920938463463374607431768211455', // uint128 max
-        amount1Max: '340282366920938463463374607431768211455',
+        tokenId: tokenIdBN,
+        recipient: ethers.utils.getAddress(address),
+        amount0Max: MAX_UINT128,
+        amount1Max: MAX_UINT128,
       };
 
       const collectData = iface.encodeFunctionData('collect', [collectParams]);
@@ -324,13 +342,13 @@ class UniswapIntegration {
           },
         ],
         position: {
-          tokenId,
+          tokenId: tokenIdBN.toString(),
           token0: positionData.token0,
           token1: positionData.token1,
           fee: positionData.fee,
-          liquidity: positionData.liquidity.toString(),
-          tokensOwed0: positionData.tokensOwed0.toString(),
-          tokensOwed1: positionData.tokensOwed1.toString(),
+          liquidity: liquidityBN.toString(),
+          tokensOwed0: tokensOwed0BN.toString(),
+          tokensOwed1: tokensOwed1BN.toString(),
         },
         from: address,
       };
