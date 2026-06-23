@@ -83,6 +83,12 @@ class AIService {
       // Generate predictions using statistical ensemble
       const predictions = await predictPrices(historicalData, horizon);
 
+      // Calculate average prediction price
+      const preds = predictions.predictions || [];
+      const average = preds.length > 0
+        ? preds.reduce((sum, p) => sum + (p.price || 0), 0) / preds.length
+        : null;
+
       return {
         symbol,
         timeframe,
@@ -90,7 +96,8 @@ class AIService {
         currentPrice: historicalData[historicalData.length - 1]?.close
                       ?? historicalData[historicalData.length - 1]?.price
                       ?? null,
-        predictions: predictions.predictions || [],
+        predictions: preds,
+        average: average ? parseFloat(average.toFixed(2)) : null,
         confidence: predictions.confidence,
         indicators: predictions.indicators,
         methodology: 'statistical_ensemble',
@@ -152,14 +159,22 @@ class AIService {
    * Perform comprehensive risk assessment
    * Calculates volatility, Value at Risk (VaR), Sharpe ratio
    * 
-   * @param {Array} assets - [{symbol, amount}]
+   * @param {Array|String} assetsOrUserId - Array of [{symbol, amount}] or userId string
    * @param {String} timeframe - Historical analysis period
    * @returns {Promise<Object>} Risk metrics and recommendations
    */
-  async getRiskAssessment(userId) {
+  async getRiskAssessment(assetsOrUserId, timeframe = '30d') {
     try {
-      const portfolioService = require('./portfolio.service');
-      const assets = await portfolioService.getAllAssets(userId).catch(() => []);
+      // Support both (userId) and (assets[], timeframe) calling conventions
+      let assets = [];
+      if (Array.isArray(assetsOrUserId)) {
+        // Called from controller with validated body: assets is already an array
+        assets = assetsOrUserId;
+      } else {
+        // Called with userId — fetch portfolio from DB
+        const portfolioService = require('./portfolio.service');
+        assets = await portfolioService.getAllAssets(assetsOrUserId).catch(() => []);
+      }
 
       // ✅ Guard: return safe default if no assets
       if (!assets || assets.length === 0) {
@@ -175,7 +190,6 @@ class AIService {
       logger.debug(`Performing risk assessment for ${assets.length} assets`);
 
       // Helper to parse timeframe and calculate dates
-      const timeframe = '30d';
       const getDateRange = (tf) => {
         const today = new Date();
         const days = parseInt(tf) || 365;
@@ -1635,6 +1649,83 @@ const params = {
     } catch (error) {
       logger.warn('Trending coins fetch failed:', error.message);
       return [];
+    }
+  }
+
+  /**
+   * Get investment opportunities — wraps market data + statistical scoring
+   */
+  async getInvestmentOpportunities(filters = {}) {
+    try {
+      const { type = 'all', riskLevel, limit = 10 } = filters;
+      const symbols = ['BTC', 'ETH', 'SOL', 'ADA', 'LINK', 'DOT', 'AVAX', 'MATIC'];
+      const prices = await marketService.getLivePrices(symbols).catch(() => ({}));
+
+      const opportunities = [];
+      for (const symbol of symbols) {
+        const p = prices[symbol];
+        if (!p) continue;
+        const change = p.change24h ?? 0;
+        const risk = Math.abs(change) > 8 ? 'high' : Math.abs(change) > 3 ? 'medium' : 'low';
+        if (riskLevel && risk !== riskLevel) continue;
+        if (type !== 'all' && type !== 'crypto') continue;
+
+        opportunities.push({
+          symbol,
+          type: 'crypto',
+          currentPrice: p.price ?? p.last ?? 0,
+          change24h: parseFloat(change.toFixed(2)),
+          riskLevel: risk,
+          opportunityScore: Math.min(100, 50 + Math.abs(change) * 2),
+          reason: change > 0
+            ? `${symbol} up ${change.toFixed(1)}% — momentum signal`
+            : `${symbol} down ${Math.abs(change).toFixed(1)}% — potential dip opportunity`,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Sort by opportunity score descending
+      opportunities.sort((a, b) => b.opportunityScore - a.opportunityScore);
+
+      return {
+        opportunities: opportunities.slice(0, limit),
+        total: opportunities.length,
+        filters,
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.error('Error getting investment opportunities:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a live market overview snapshot (NEW — used by the new MarketOverviewPanel)
+   */
+  async getMarketOverview() {
+    try {
+      const [fearGreed, dominance, trending] = await Promise.allSettled([
+        this.getFearGreedIndex(),
+        this.getBTCDominance(),
+        this.getTrendingCoins()
+      ]);
+
+      const prices = await marketService.getLivePrices(['BTC', 'ETH', 'SOL']).catch(() => ({}));
+
+      return {
+        fearGreed: fearGreed.status === 'fulfilled' ? fearGreed.value : null,
+        dominance: dominance.status === 'fulfilled' ? dominance.value : null,
+        trending: trending.status === 'fulfilled' ? trending.value?.slice(0, 5) : [],
+        spotPrices: {
+          BTC: prices.BTC ?? null,
+          ETH: prices.ETH ?? null,
+          SOL: prices.SOL ?? null
+        },
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.error('Error getting market overview:', error);
+      throw error;
     }
   }
 
