@@ -248,6 +248,41 @@ class PaymentService {
     return { url: session.url };
   }
 
+  /**
+   * Get billing history (invoices) for a user
+   */
+  async getBillingHistory(userId) {
+    const subscription = await Subscription.findOne({ userId });
+
+    // If no Stripe customer, return empty array (free plan users)
+    if (!subscription?.stripeCustomerId || !stripe) {
+      return [];
+    }
+
+    try {
+      const invoices = await stripe.invoices.list({
+        customer: subscription.stripeCustomerId,
+        limit: 50,
+      });
+
+      return invoices.data.map(invoice => ({
+        id: invoice.id,
+        amount: invoice.amount_paid / 100, // Convert from cents to dollars
+        date: new Date(invoice.created * 1000).toISOString(),
+        status: invoice.status === 'paid' ? 'succeeded' : invoice.status === 'open' ? 'pending' : 'failed',
+        invoiceUrl: invoice.hosted_invoice_url,
+        pdfUrl: invoice.pdf,
+        period: {
+          start: invoice.period_start,
+          end: invoice.period_end,
+        },
+      }));
+    } catch (error) {
+      logger.error('Failed to fetch billing history:', error.message);
+      return [];
+    }
+  }
+
   // ── Private webhook handlers ──────────────────────────────────────────────
 
   async _handleCheckoutComplete(session) {
