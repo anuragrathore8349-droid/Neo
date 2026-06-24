@@ -53,6 +53,14 @@ const SecurityCenter: React.FC = () => {
   const [devices, setDevices] = useState<any[]>([]);
   const [activity, setActivity] = useState<any[]>([]);
   const [secLoading, setSecLoading] = useState(true);
+  const [permissions, setPermissions] = useState([
+    { id: 'trading',       name: 'Trading Access',       description: 'Allow executing trades and managing orders', enabled: true,  critical: true  },
+    { id: 'api',           name: 'API Access',            description: 'Enable third-party API integrations',        enabled: false, critical: true  },
+    { id: 'notifications', name: 'Email Notifications',   description: 'Receive important updates via email',        enabled: false, critical: false },
+  ]);
+  const [togglingPerm, setTogglingPerm] = useState<string | null>(null);
+  const [verifyingEmail, setVerifyingEmail] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState('');
 
   const loadSecurityData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -77,9 +85,10 @@ const SecurityCenter: React.FC = () => {
     loadSecurity();
     
     try {
-      const [statusRes, sessionsRes] = await Promise.allSettled([
+      const [statusRes, sessionsRes, activityRes] = await Promise.allSettled([
         apiFetch<any>('/api/user/security-status'),
         apiFetch<any>('/api/user/sessions').catch(() => ({ data: [] })),
+        apiFetch<any>('/api/security/activity').catch(() => ({ data: { logs: [] } })),
       ]);
 
       if (statusRes.status === 'fulfilled') {
@@ -107,34 +116,20 @@ const SecurityCenter: React.FC = () => {
         })));
       }
 
-      // Build activity logs from security status info
-      const logs: ActivityLog[] = [];
-      if (statusRes.status === 'fulfilled') {
-        const d = statusRes.value?.data || statusRes.value;
-        if (d.lastLogin) {
-          logs.push({
-            id: 'last-login',
-            type: 'login',
-            description: 'Last successful login',
-            location: 'Your location',
-            device: 'Your device',
-            timestamp: new Date(d.lastLogin).toLocaleString(),
-            critical: false,
-          });
-        }
-        if (d.failedAttempts > 0) {
-          logs.push({
-            id: 'failed-attempts',
-            type: 'security_alert',
-            description: `${d.failedAttempts} failed login attempt(s) recorded`,
-            location: 'Unknown',
-            device: 'Unknown',
-            timestamp: 'Recent',
-            critical: true,
-          });
-        }
+      if (activityRes.status === 'fulfilled') {
+        const rawLogs = activityRes.value?.data?.logs || [];
+        setActivityLogs(rawLogs.map((log: any) => ({
+          id:          String(log._id),
+          type:        log.action === 'login' ? 'login'
+                     : log.action?.includes('fail') ? 'security_alert'
+                     : 'settings_change',
+          description: log.description,
+          location:    log.ipAddress || 'Unknown',
+          device:      log.device || log.userAgent || 'Unknown',
+          timestamp:   new Date(log.createdAt).toLocaleString(),
+          critical:    log.status === 'failed' || log.status === 'blocked',
+        })));
       }
-      setActivityLogs(logs);
 
     } catch (err: any) {
       setError(err?.message || 'Failed to load security data');
@@ -197,6 +192,37 @@ const SecurityCenter: React.FC = () => {
     }
   };
 
+  const handlePermissionToggle = async (id: string) => {
+    const perm = permissions.find(p => p.id === id);
+    if (!perm) return;
+    const newVal = !perm.enabled;
+    setTogglingPerm(id);
+    try {
+      await apiFetch(`/api/security/permissions/${id}`, {
+        method: 'PUT',
+        body: { enabled: newVal },
+      });
+      setPermissions(prev => prev.map(p => p.id === id ? { ...p, enabled: newVal } : p));
+    } catch (e: any) {
+      console.error('Permission toggle failed:', e.message);
+    } finally {
+      setTogglingPerm(null);
+    }
+  };
+
+  const handleVerifyEmail = async () => {
+    setVerifyingEmail(true);
+    setVerifyMsg('');
+    try {
+      await apiFetch('/api/auth/resend-verification', { method: 'POST' });
+      setVerifyMsg('Verification email sent! Check your inbox.');
+    } catch (e: any) {
+      setVerifyMsg(e?.message || 'Failed to send verification email');
+    } finally {
+      setVerifyingEmail(false);
+    }
+  };
+
   // ── Derive security score ─────────────────────────────────────────────
   const calculateSecurityScore = (status: SecurityStatus): number => {
     let score = 40;
@@ -230,30 +256,7 @@ const SecurityCenter: React.FC = () => {
     },
   ];
 
-  // ── Permissions (based on user plan) ─────────────────────────────────
-  const buildPermissions = () => [
-    {
-      id: 'trading',
-      name: 'Trading Access',
-      description: 'Allow executing trades and managing orders',
-      enabled: true,
-      critical: true,
-    },
-    {
-      id: 'api',
-      name: 'API Access',
-      description: 'Enable third-party API integrations',
-      enabled: false,
-      critical: true,
-    },
-    {
-      id: 'notifications',
-      name: 'Email Notifications',
-      description: 'Receive important updates via email',
-      enabled: securityStatus?.emailVerified || false,
-      critical: false,
-    },
-  ];
+
 
   if (loading) {
     return (
@@ -432,11 +435,11 @@ const SecurityCenter: React.FC = () => {
         <div>
           <h2 className="text-xl font-semibold mb-4">Permission Controls</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {buildPermissions().map(permission => (
+            {permissions.map(permission => (
               <PermissionCard
                 key={permission.id}
                 permission={permission}
-                onToggle={() => {}}
+                onToggle={togglingPerm ? () => {} : handlePermissionToggle}
               />
             ))}
           </div>
@@ -446,9 +449,18 @@ const SecurityCenter: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <RecoveryCard
             options={buildRecoveryOptions()}
-            onVerify={(type) => console.log('Verify:', type)}
+            onVerify={async (type) => {
+              if (type === 'email') {
+                await handleVerifyEmail();
+              }
+            }}
             onMakePrimary={(type) => console.log('Make primary:', type)}
           />
+          {verifyMsg && (
+            <p className={`text-sm mt-2 ${verifyMsg.includes('sent') ? 'text-green-400' : 'text-red-400'}`}>
+              {verifyMsg}
+            </p>
+          )}
         </div>
 
       </div>
