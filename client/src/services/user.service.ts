@@ -1,10 +1,5 @@
 import { apiFetch } from './api';
 
-interface ApiResponse<T> {
-  status: string;
-  data: T;
-}
-
 export interface UserProfile {
   id: string;
   email: string;
@@ -20,80 +15,75 @@ export interface UserProfile {
   bio?: string;
   plan?: string;
   preferences?: {
-    notifications?: Record<string, boolean>;
-    appearance?: {
-      theme?: string;
-      accent?: string;
-      fontSize?: string;
-    };
+    notifications?: Record<string, any>;
+    appearance?: { theme?: string; accent?: string; fontSize?: string };
+    permissions?: { trading?: boolean; api?: boolean; notifications?: boolean };
   };
   timezone?: string;
   language?: string;
   currency?: string;
 }
 
-export async function getProfile(accessToken: string): Promise<ApiResponse<UserProfile>> {
-  return apiFetch<ApiResponse<UserProfile>>('/api/user/profile', {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
+export async function getProfile() {
+  return apiFetch<{ status: string; data: UserProfile }>('/api/user/profile');
 }
 
-export async function updateProfile(accessToken: string, data: Record<string, unknown>): Promise<ApiResponse<UserProfile>> {
-  return apiFetch<ApiResponse<UserProfile>>('/api/user/profile', {
+export async function updateProfile(data: Record<string, unknown>) {
+  return apiFetch<{ status: string; data: UserProfile }>('/api/user/profile', {
     method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: data
+    body: data,
   });
 }
 
-export async function updateNotificationSettings(accessToken: string, settings: Record<string, boolean>): Promise<ApiResponse<Record<string, boolean>>> {
-  return apiFetch<ApiResponse<Record<string, boolean>>>('/api/user/notifications', {
+export async function changePassword(data: { currentPassword: string; newPassword: string }) {
+  return apiFetch('/api/user/password', { method: 'PUT', body: data });
+}
+
+export async function getNotificationSettings() {
+  return apiFetch<{ status: string; data: Record<string, any> }>('/api/user/notifications');
+}
+
+export async function updateNotificationSettings(settings: Record<string, any>) {
+  return apiFetch<{ status: string; data: Record<string, any> }>('/api/user/notifications', {
     method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: settings
+    body: settings,
   });
 }
 
-export async function getNotificationSettings(accessToken: string): Promise<ApiResponse<Record<string, any>>> {
-  return apiFetch<ApiResponse<Record<string, any>>>('/api/user/notifications', {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
+export async function getApiKeys() {
+  return apiFetch<{ status: string; data: any[] }>('/api/user/api-keys');
 }
 
-export async function getApiKeys(accessToken: string): Promise<ApiResponse<any[]>> {
-  return apiFetch<ApiResponse<any[]>>('/api/user/api-keys', {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-}
-
-export async function createApiKey(accessToken: string, data: Record<string, unknown>): Promise<ApiResponse<any>> {
-  return apiFetch<ApiResponse<any>>('/api/user/api-keys', {
+export async function createApiKey(data: {
+  label: string; exchange: string; apiKey: string; secret: string;
+}) {
+  return apiFetch<{ status: string; data: any }>('/api/user/api-keys', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: data
+    body: data,
   });
 }
 
-export async function deleteApiKey(accessToken: string, id: string): Promise<ApiResponse<unknown>> {
-  return apiFetch<ApiResponse<unknown>>(`/api/user/api-keys/${id}`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
+export async function deleteApiKey(id: string) {
+  return apiFetch(`/api/user/api-keys/${id}`, { method: 'DELETE' });
+}
+
+// Security helpers
+export async function getSecurityStatus() {
+  return apiFetch<{ status: string; data: any }>('/api/user/security-status');
+}
+
+export async function getSessions() {
+  return apiFetch<{ status: string; data: any[] }>('/api/user/sessions');
+}
+
+export async function removeSession(id: string) {
+  return apiFetch(`/api/user/sessions/${id}`, { method: 'DELETE' });
+}
+
+export async function getActivityLog() {
+  return apiFetch<{ status: string; data: any }>('/api/security/activity');
+}
+
+export async function togglePermission(id: string, enabled: boolean) {
+  return apiFetch(`/api/security/permissions/${id}`, { method: 'PUT', body: { enabled } });
 }
