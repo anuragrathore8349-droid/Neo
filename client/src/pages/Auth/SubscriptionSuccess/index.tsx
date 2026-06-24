@@ -4,14 +4,17 @@ import { CheckCircle, ArrowRight } from 'lucide-react';
 import AuthLayout from '../../../components/common/AuthLayout';
 import Button from '../../../components/common/Button/Button';
 import { usePlan } from '../../../context/PlanContext';
+import { useUser } from '../../../context/UserContext';
 import { toast } from 'react-toastify';
 
 const SubscriptionSuccess: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { refreshSubscription } = usePlan();
+  const { refreshSubscription, currentPlan } = usePlan();
+  const { updateUser } = useUser();
   const sessionId = searchParams.get('session_id');
 
+  // Handle subscription success
   useEffect(() => {
     const handleSuccess = async () => {
       try {
@@ -27,6 +30,13 @@ const SubscriptionSuccess: React.FC = () => {
       handleSuccess();
     }
   }, [sessionId, refreshSubscription]);
+
+  // Update user plan once subscription is refreshed
+  useEffect(() => {
+    if (currentPlan?.name) {
+      updateUser({ plan: currentPlan.name });
+    }
+  }, [currentPlan?.name, updateUser]);
 
   return (
     <AuthLayout
