@@ -41,6 +41,13 @@ class PaymentController {
     } catch (error) { next(error); }
   }
 
+  async getBillingHistory(req, res, next) {
+    try {
+      const history = await paymentService.getBillingHistory(req.user.userId);
+      res.json({ status: 'success', data: history });
+    } catch (error) { next(error); }
+  }
+
   // ── Stripe Webhook ────────────────────────────────────────────────────────
   async handleWebhook(req, res, next) {
     const sig = req.headers['stripe-signature'];
