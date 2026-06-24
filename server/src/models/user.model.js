@@ -112,6 +112,20 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: 'medium'
       }
+    },
+    permissions: {
+      trading: {
+        type: Boolean,
+        default: true
+      },
+      api: {
+        type: Boolean,
+        default: false
+      },
+      notifications: {
+        type: Boolean,
+        default: true
+      }
     }
   },
   role: {
