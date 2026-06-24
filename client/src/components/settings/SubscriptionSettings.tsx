@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { CreditCard, AlertCircle, CheckCircle, Zap } from 'lucide-react';
-import { usePlan } from '../../../context/PlanContext';
-import * as paymentService from '../../../services/payment.service';
-import Button from '../../../components/common/Button/Button';
+import { usePlan } from '../../context/PlanContext';
+import * as paymentService from '../../services/payment.service';
+import Button from '../common/Button/Button';
 import { toast } from 'react-toastify';
 
 interface BillingHistoryItem {
@@ -41,6 +41,7 @@ const SubscriptionSettings: React.FC = () => {
       setBillingHistory(history);
     } catch (error) {
       console.error('Failed to load billing history:', error);
+      toast.error('Failed to load billing history');
     } finally {
       setIsLoadingHistory(false);
     }
@@ -48,9 +49,12 @@ const SubscriptionSettings: React.FC = () => {
 
   const handleUpgradePlan = async (planId: string) => {
     try {
+      toast.info('Preparing upgrade...');
       await upgradeToPlans(planId);
+      toast.success('Upgrade initiated! Redirecting to checkout...');
     } catch (error) {
-      toast.error('Failed to initiate upgrade');
+      console.error('Upgrade error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to initiate upgrade');
     }
   };
 
