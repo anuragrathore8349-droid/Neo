@@ -73,3 +73,13 @@ export const createPortalSession = async (returnUrl?: string) => {
   });
   return response.data;
 };
+
+/**
+ * Get billing history for the user
+ */
+export const getBillingHistory = async () => {
+  const response = await apiFetch<ApiResponse<any[]>>('/api/payment/billing-history', {
+    method: 'GET'
+  });
+  return response.data || [];
+};
