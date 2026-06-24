@@ -98,6 +98,14 @@ class AuthService {
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       await user.incrementLoginAttempts();
+      // Log failed login attempt
+      const ActivityLog = require('../models/activity-log.model');
+      ActivityLog.create({
+        userId: user._id,
+        action: 'login_failed',
+        description: 'Failed login attempt',
+        status: 'failed',
+      }).catch(() => {});
       throw httpError('Invalid credentials', 401);
     }
 
@@ -114,6 +122,14 @@ class AuthService {
       });
 
       if (!isValid) {
+        // Log failed 2FA attempt
+        const ActivityLog = require('../models/activity-log.model');
+        ActivityLog.create({
+          userId: user._id,
+          action: 'login_failed',
+          description: 'Failed 2FA verification',
+          status: 'failed',
+        }).catch(() => {});
         throw httpError('Invalid 2FA code', 401);
       }
     }
@@ -148,6 +164,17 @@ class AuthService {
         }
       }
     });
+
+    // Log successful login
+    const ActivityLog = require('../models/activity-log.model');
+    ActivityLog.create({
+      userId: user._id,
+      action: 'login',
+      description: 'Successful login',
+      ipAddress: null,
+      userAgent: null,
+      status: 'success',
+    }).catch(() => {});
 
     return {
       accessToken,
