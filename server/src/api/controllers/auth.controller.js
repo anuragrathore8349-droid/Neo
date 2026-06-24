@@ -27,12 +27,17 @@ class AuthController {
 
   async resendVerification(req, res, next) {
     try {
-      await authService.resendVerificationEmail(req.validatedData.body.email);
-      // Always respond with success so we don't reveal account existence
-      res.json({
-        status: 'success',
-        message: 'If an account with this email exists and is not yet verified, a new verification link has been sent.'
-      });
+      const emailService = require('../../services/email.service');
+      const user = await User.findById(req.user.userId).select('email isEmailVerified');
+      if (!user) return res.status(404).json({ status: 'error', message: 'User not found' });
+      if (user.isEmailVerified) {
+        return res.json({ status: 'success', message: 'Email is already verified' });
+      }
+      // Generate verification token same way as register flow
+      const token = require('crypto').randomBytes(32).toString('hex');
+      await User.findByIdAndUpdate(req.user.userId, { emailVerificationToken: token });
+      await emailService.sendVerificationEmail(user.email, token);
+      res.json({ status: 'success', message: 'Verification email sent' });
     } catch (error) {
       next(error);
     }
