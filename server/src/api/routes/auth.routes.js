@@ -12,7 +12,7 @@ router.post('/register',
 );
 
 router.post('/resend-verification',
-  validateRequest(authSchemas.resendVerification),
+  authMiddleware,
   authController.resendVerification
 );
 
