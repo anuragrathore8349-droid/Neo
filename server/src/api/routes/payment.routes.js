@@ -17,6 +17,7 @@ router.post(
 // ── Protected ────────────────────────────────────────────────────────────────
 router.use(authMiddleware);
 router.get('/subscription',          paymentController.getSubscription);
+router.get('/billing-history',       paymentController.getBillingHistory);
 router.post('/checkout',             paymentController.createCheckout);
 router.post('/cancel',               paymentController.cancelSubscription);
 router.post('/portal',               paymentController.createPortalSession);
