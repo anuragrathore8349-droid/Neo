@@ -45,7 +45,7 @@ const PlanSelection: React.FC = () => {
 
         {/* Plans Grid */}
         {allPlans.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8 mb-12">
+          <div className="flex flex-col gap-8 mb-12 max-w-4xl mx-auto">
             {allPlans.map((plan, index) => {
               const isPopular = plan.id === 'pro';
 
@@ -57,7 +57,7 @@ const PlanSelection: React.FC = () => {
                   transition={{ delay: index * 0.1, duration: 0.3 }}
                   className={`relative rounded-xl border-2 transition-all duration-300 overflow-hidden ${
                     isPopular
-                      ? 'border-primary bg-dark-800 ring-2 ring-primary ring-opacity-50 sm:scale-105'
+                      ? 'border-primary bg-dark-800 ring-2 ring-primary ring-opacity-50 shadow-2xl'
                       : 'border-dark-700 bg-dark-900 hover:border-primary/50'
                   }`}
                 >
