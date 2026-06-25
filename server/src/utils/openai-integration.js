@@ -135,12 +135,13 @@ const getOpenAIInsights = async (anomaly) => {
 
   const prompt = buildAnomalyPrompt(anomaly);
   const fallback = getBasicExplanation(anomaly);
-  
-  return callOpenAIWithRetry(
+
+  const result = await callOpenAIWithRetry(
     () => callOpenAI(prompt, 'concise'),
     fallback,
     2
-  ) || fallback;
+  );
+  return result || fallback;
 };
 
 /**
@@ -330,12 +331,14 @@ const callOpenAI = async (prompt, format = 'text') => {
  * Wrapper to handle OpenAI calls with graceful fallback on rate limits
  * Returns fallback response instead of throwing on errors
  */
-const callOpenAIWithRetry = async (fn, fallback = null) => {
+const callOpenAIWithRetry = async (fn, fallback = null, maxRetries = 2) => {
   try {
-    return await fn();
+    return await retryWithBackoff(fn, maxRetries);
   } catch (err) {
     if (err?.response?.status === 429) {
       logger.warn('⚠️ OpenAI rate limit exceeded after retry attempts, returning fallback.');
+    } else if (err?.response?.status === 401) {
+      logger.error('❌ OpenAI API key is invalid — check OPENAI_API_KEY in .env');
     } else {
       logger.warn('OpenAI call failed:', err?.message);
     }
