@@ -78,59 +78,70 @@ const seedData = {
   ],
   videos: [
     {
-      title: 'Crypto Trading Masterclass',
-      description: 'Complete guide to becoming a professional crypto trader.',
-      thumbnail: 'https://images.unsplash.com/photo-1642790551116-18e150f248e5',
-      videoUrl: 'https://example.com/video1',
-      duration: '45:20',
-      instructor: 'Sarah Chen',
+      title: 'Crypto Trading for Beginners – Full Course',
+      description: 'Complete beginner-friendly guide to crypto trading, reading charts, and managing risk.',
+      thumbnail: 'https://img.youtube.com/vi/xWHs_nJBv2w/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=xWHs_nJBv2w',
+      duration: '1:02:34',
+      instructor: 'Andrei Jikh',
       category: 'Trading',
-      difficulty: 'advanced',
-      tags: ['trading', 'masterclass', 'strategies'],
+      difficulty: 'beginner',
+      tags: ['trading', 'beginner', 'crypto'],
     },
     {
-      title: 'DeFi Yield Farming Guide',
-      description: 'Learn how to maximize your returns through yield farming strategies.',
-      thumbnail: 'https://images.unsplash.com/photo-1620321023374-d1a68fbc720d',
-      videoUrl: 'https://example.com/video2',
-      duration: '32:15',
-      instructor: 'Michael Brown',
+      title: 'DeFi Explained – Decentralized Finance Full Guide',
+      description: 'Everything you need to know about DeFi, yield farming, liquidity pools and protocols.',
+      thumbnail: 'https://img.youtube.com/vi/17QRFlml4pA/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=17QRFlml4pA',
+      duration: '28:45',
+      instructor: 'Finematics',
       category: 'DeFi',
       difficulty: 'intermediate',
-      tags: ['defi', 'yield-farming', 'passive-income'],
+      tags: ['defi', 'yield-farming', 'liquidity'],
     },
     {
       title: 'Blockchain Technology Explained',
-      description: 'Understanding the fundamentals of blockchain technology.',
-      thumbnail: 'https://images.unsplash.com/photo-1627873649417-af36141a4016',
-      videoUrl: 'https://example.com/video3',
-      duration: '28:45',
-      instructor: 'Dr. Alex Smith',
+      description: 'A clear visual explanation of how blockchain technology works under the hood.',
+      thumbnail: 'https://img.youtube.com/vi/SSo_EIwHSd4/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=SSo_EIwHSd4',
+      duration: '26:21',
+      instructor: '3Blue1Brown',
       category: 'Blockchain',
       difficulty: 'beginner',
-      tags: ['blockchain', 'fundamentals', 'technology'],
+      tags: ['blockchain', 'technology', 'explainer'],
     },
     {
-      title: 'Security in Crypto',
-      description: 'Protect your digital assets with essential security practices.',
-      thumbnail: 'https://images.unsplash.com/photo-1633356122544-f134324ef6db',
-      videoUrl: 'https://example.com/video4',
-      duration: '22:10',
-      instructor: 'Security Expert',
+      title: 'Smart Contracts & Solidity – Crash Course',
+      description: 'Learn what smart contracts are and how to write your first Solidity program on Ethereum.',
+      thumbnail: 'https://img.youtube.com/vi/M576WGiDBdQ/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=M576WGiDBdQ',
+      duration: '32:15',
+      instructor: 'freeCodeCamp',
+      category: 'Blockchain',
+      difficulty: 'intermediate',
+      tags: ['smart-contracts', 'solidity', 'ethereum'],
+    },
+    {
+      title: 'Crypto Security – How to Keep Your Coins Safe',
+      description: 'Best practices for securing your crypto: hardware wallets, 2FA, seed phrases, and phishing.',
+      thumbnail: 'https://img.youtube.com/vi/Yr9pBcS76Zg/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=Yr9pBcS76Zg',
+      duration: '18:40',
+      instructor: 'CoinBureau',
       category: 'Security',
       difficulty: 'beginner',
-      tags: ['security', 'protection', 'best-practices'],
+      tags: ['security', 'hardware-wallet', 'protection'],
     },
     {
-      title: 'NFT Art and Collectibles',
-      description: 'Exploring the world of NFT art and digital collectibles.',
-      thumbnail: 'https://images.unsplash.com/photo-1634361566641-3fb5ba9a2c2d',
-      videoUrl: 'https://example.com/video5',
-      duration: '35:50',
-      instructor: 'NFT Curator',
+      title: 'What Are NFTs? Complete Guide 2024',
+      description: 'Everything you need to know about NFTs, how to buy, sell, and evaluate them.',
+      thumbnail: 'https://img.youtube.com/vi/FkUn86bH34M/hqdefault.jpg',
+      videoUrl: 'https://www.youtube.com/watch?v=FkUn86bH34M',
+      duration: '22:10',
+      instructor: 'Whiteboard Crypto',
       category: 'NFT',
-      difficulty: 'intermediate',
-      tags: ['nft', 'art', 'collectibles'],
+      difficulty: 'beginner',
+      tags: ['nft', 'digital-art', 'guide'],
     },
   ],
   glossaryTerms: [
@@ -240,33 +251,36 @@ const seedData = {
   ],
 };
 
-async function seedLearningContent() {
-  const { Article, Video, GlossaryTerm, Guide } = require('../models/learning.model');
-  const articleCount = await Article.countDocuments();
-  if (articleCount > 0) return; // Already seeded
+const seedDB = async () => {
+  try {
+    await connectDB();
+    const { Article, Video, GlossaryTerm, Guide } = require('../models/learning.model');
+    const [articleCount, videoCount] = await Promise.all([
+      Article.estimatedDocumentCount(),
+      Video.estimatedDocumentCount(),
+    ]);
 
-  await Promise.all([
-    Article.insertMany(seedData.articles || []),
-    Video.insertMany(seedData.videos || []),
-    GlossaryTerm.insertMany(seedData.glossaryTerms || []),
-    Guide.insertMany(seedData.guides || []),
-  ]);
-}
-
-// Allow this to be called directly as a script OR imported as a module
-if (require.main === module) {
-  (async () => {
-    try {
-      await connectDB();
-      console.log('Connected to database');
-      await seedLearningContent();
-      console.log('✅ Learning content seeded successfully');
-      process.exit(0);
-    } catch (error) {
-      console.error('❌ Seeding failed:', error);
-      process.exit(1);
+    if (articleCount > 0 || videoCount > 0) {
+      console.log('✓ Learning DB already seeded. Skipping.');
+      return;
     }
-  })();
+
+    console.log('🌱 Seeding learning content...');
+    await Promise.all([
+      Article.insertMany(seedData.articles || []),
+      Video.insertMany(seedData.videos || []),
+      GlossaryTerm.insertMany(seedData.glossaryTerms || []),
+      Guide.insertMany(seedData.guides || []),
+    ]);
+    console.log('✅ Learning content seeded successfully!');
+  } catch (error) {
+    console.error('❌ Seed error:', error);
+  }
+};
+
+// Run when called directly: node src/utils/seed-learning.js
+if (require.main === module) {
+  seedDB().then(() => process.exit(0)).catch(() => process.exit(1));
 }
 
-module.exports = { seedLearningContent };
+module.exports = seedDB;
