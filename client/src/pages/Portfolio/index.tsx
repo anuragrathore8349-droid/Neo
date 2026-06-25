@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/common/Tabs';
 import GlassCard from '../../components/common/GlassCard';
 import { motion } from 'framer-motion';
@@ -42,7 +43,10 @@ interface PortfolioProps {
 const Portfolio: React.FC<PortfolioProps> = ({ assets = [], transactions = [] }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedAsset, setSelectedAsset] = useState<PortfolioAsset | null>(null);
+  const [preselectedAsset, setPreselectedAsset] = useState<PortfolioAsset | null>(null);
   const [timeframe, setTimeframe] = useState<'1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL'>('1M');
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [assetTypeFilter, setAssetTypeFilter] = useState<string | null>(null);
   const [portfolioAssets, setPortfolioAssets] = useState<PortfolioAsset[]>([]);
@@ -65,6 +69,7 @@ const Portfolio: React.FC<PortfolioProps> = ({ assets = [], transactions = [] })
   const [isCSVImportModalOpen, setIsCSVImportModalOpen] = useState(false);
   const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
   const [chartData, setChartData] = useState<any[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
   const socketRef = React.useRef<Socket | null>(null);
   const portfolioIdRef = React.useRef<string | null>(null);
 const [exporting, setExporting] = useState(false);
@@ -180,6 +185,7 @@ useEffect(() => {
   // Fetch chart data when timeframe changes
   useEffect(() => {
     const fetchChartData = async () => {
+      setChartLoading(true);
       try {
         const timeframeMap: { [key: string]: string } = {
           '1W': '1w',
@@ -189,35 +195,35 @@ useEffect(() => {
           '1Y': '1y',
           'ALL': 'all'
         };
-        
+
         const result = await getPortfolioHistory(timeframeMap[timeframe]);
-        
+
         if (result?.data && Array.isArray(result.data)) {
           // Format data for recharts — preserve nulls so charts can show gaps instead of zeros
           const formattedData = result.data.map((point: any) => ({
-            date: new Date(point.timestamp || point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            date: new Date(point.timestamp || point.date).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              ...(timeframe === '1Y' || timeframe === 'ALL' ? { year: '2-digit' } : {})
+            }),
             value: point.value ?? null,
             timestamp: point.timestamp || point.date,
             // Include per-asset breakdown for overlay (when toggled on)
             assets: point.assets || {}
           }));
-          
+
           setChartData(formattedData);
-          
-          // Also fetch per-asset history for the overlay (only if toggled on)
-          // Data is already in portfolioHistory snapshots — extract per-asset values
-          if (showAssetLines && portfolioAssets.length > 0) {
-            // Use the same history data — it has per-asset values from the snapshot
-            // The chart data already contains all info; we just need to extract per-asset
-            // Per-asset lines can now be rendered from formattedData[].assets[symbol]
-          }
+        } else {
+          setChartData([]);
         }
       } catch (error) {
         console.error('Error fetching chart data:', error);
         setChartData([]);
+      } finally {
+        setChartLoading(false);
       }
     };
-    
+
     fetchChartData();
   }, [timeframe]);
 
@@ -226,6 +232,14 @@ useEffect(() => {
       setSelectedAsset(portfolioAssets[0]);
     }
   }, [portfolioAssets, selectedAsset]);
+
+  // Deep-link support: /portfolio?tab=transactions comes from Dashboard "View All"
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && ['overview', 'asset-details', 'transactions', 'performance'].includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
 
   const portfolioTotalValue = portfolioSummary.totalValue;
 
@@ -285,6 +299,19 @@ useEffect(() => {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     return `${Math.floor(seconds / 86400)}d ago`;
+  };
+
+  const getChartDateRange = () => {
+    if (!chartData || chartData.length === 0) return '';
+    const first = new Date(chartData[0].timestamp);
+    const last = new Date(chartData[chartData.length - 1].timestamp);
+    const formatDate = (date: Date) =>
+      date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        ...(timeframe === '1Y' || timeframe === 'ALL' ? { year: '2-digit' } : {}),
+      });
+    return `${formatDate(first)} — ${formatDate(last)}`;
   };
 
   // Handle asset selection
@@ -617,15 +644,14 @@ useEffect(() => {
   transactions={portfolioTransactions.filter(t => t.asset.symbol === selectedAsset.symbol)}
   onBack={handleBackToOverview}
   onTrade={(asset) => {
-    setIsAddAssetModalOpen(true);  // reuse modal; or navigate to trading page
+    navigate(`/trading?symbol=${asset.symbol}`);
   }}
   onAddPosition={(asset) => {
+    setPreselectedAsset(asset);
     setIsAddAssetModalOpen(true);
   }}
   onViewMarketData={(symbol) => {
-    // If you have a market/explore page, navigate there:
-    // navigate(`/market?symbol=${symbol}`);
-    window.open(`https://www.coingecko.com/en/coins/${symbol.toLowerCase()}`, '_blank');
+    navigate(`/trading?symbol=${symbol}&view=market`);
   }}
   onRefresh={fetchPortfolioData}
 />          ) : (
@@ -645,7 +671,12 @@ useEffect(() => {
         <TabsContent value="performance" className="pt-6">
           <GlassCard className="p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold">Portfolio Performance</h3>
+              <div>
+                <h3 className="text-xl font-semibold">Portfolio Performance</h3>
+                {chartData.length > 0 && !chartLoading && (
+                  <p className="text-xs text-dark-400 mt-1">{getChartDateRange()}</p>
+                )}
+              </div>
               <div className="flex space-x-2">
                 <button
                   className={`px-3 py-1 text-sm rounded-lg transition-all mr-2 ${
@@ -680,7 +711,11 @@ useEffect(() => {
             </div>
             
             <div className="h-80 flex items-center justify-center">
-              {chartData && chartData.length > 0 ? (
+              {chartLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : chartData && chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={chartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
@@ -925,8 +960,15 @@ useEffect(() => {
 
       <AddAssetModal 
         isOpen={isAddAssetModalOpen}
-        onClose={() => setIsAddAssetModalOpen(false)}
-        onAssetAdded={fetchPortfolioData}
+        onClose={() => {
+          setIsAddAssetModalOpen(false);
+          setPreselectedAsset(null);
+        }}
+        onAssetAdded={() => {
+          fetchPortfolioData();
+          setPreselectedAsset(null);
+        }}
+        initialAsset={preselectedAsset}
       />
 
       <CSVImportModal 
