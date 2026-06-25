@@ -2,12 +2,15 @@ const winston = require('winston');
 const Sentry = require('@sentry/node');
 
 const errorMiddleware = (err, req, res, next) => {
+  // Print full error to terminal
+  console.error('🔴 Express error:', err.stack || err);
+
   // Log error
-  winston.error(err.message, { 
+  winston.error(err.message, {
     error: err,
     stack: err.stack,
     path: req.path,
-    method: req.method 
+    method: req.method
   });
 
   // Report to Sentry if enabled
@@ -54,4 +57,4 @@ const errorMiddleware = (err, req, res, next) => {
   });
 };
 
-module.exports = { errorMiddleware }; 
+module.exports = { errorMiddleware };
