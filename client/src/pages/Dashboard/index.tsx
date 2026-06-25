@@ -401,21 +401,21 @@ const Dashboard: React.FC = () => {
     <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8">
       {/* Market Summary Bar */}
       {marketSummary && (
-        <div className="bg-gradient-to-r from-dark-800 to-dark-700 border border-gray-700 rounded-xl p-3 mb-6 text-sm text-gray-300 space-y-2 sm:space-y-0 sm:flex sm:gap-6 sm:items-center">
+        <div className="bg-gradient-to-r from-dark-800 to-dark-700 border border-gray-700 rounded-xl p-3 mb-6 text-xs sm:text-sm text-gray-300 space-y-2 sm:space-y-0 sm:flex sm:gap-3 md:gap-6 sm:items-center overflow-x-auto">
           {marketSummary.totalMarketCap && (
-            <div>Market Cap: <span className="font-semibold text-white">${(marketSummary.totalMarketCap / 1e12).toFixed(2)}T</span></div>
+            <div className="whitespace-nowrap">Market Cap: <span className="font-semibold text-white">${(marketSummary.totalMarketCap / 1e12).toFixed(2)}T</span></div>
           )}
           {marketSummary.volume24h && (
-            <div>24h Vol: <span className="font-semibold text-white">${(marketSummary.volume24h / 1e9).toFixed(1)}B</span></div>
+            <div className="whitespace-nowrap">24h Vol: <span className="font-semibold text-white">${(marketSummary.volume24h / 1e9).toFixed(1)}B</span></div>
           )}
           {marketSummary.btcDominance && (
-            <div>BTC Dom: <span className="font-semibold text-white">{marketSummary.btcDominance.toFixed(1)}%</span></div>
+            <div className="whitespace-nowrap">BTC Dom: <span className="font-semibold text-white">{marketSummary.btcDominance.toFixed(1)}%</span></div>
           )}
           {marketSummary.fearGreedIndex && (
-            <div>Fear & Greed: <span className={`font-semibold ${marketSummary.fearGreedIndex > 60 ? 'text-red-400' : marketSummary.fearGreedIndex < 40 ? 'text-green-400' : 'text-yellow-400'}`}>{marketSummary.fearGreedIndex}</span></div>
+            <div className="whitespace-nowrap">Fear & Greed: <span className={`font-semibold ${marketSummary.fearGreedIndex > 60 ? 'text-red-400' : marketSummary.fearGreedIndex < 40 ? 'text-green-400' : 'text-yellow-400'}`}>{marketSummary.fearGreedIndex}</span></div>
           )}
           {marketSummary.topGainer && (
-            <div>Top Gainer: <span className="font-semibold text-green-400">{marketSummary.topGainer.symbol} +{marketSummary.topGainer.change.toFixed(2)}%</span></div>
+            <div className="whitespace-nowrap">Top Gainer: <span className="font-semibold text-green-400">{marketSummary.topGainer.symbol} +{marketSummary.topGainer.change.toFixed(2)}%</span></div>
           )}
         </div>
       )}
@@ -431,9 +431,9 @@ const Dashboard: React.FC = () => {
         </div>
       )}
       <div className="container mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold mb-4 sm:mb-0">Dashboard</h2>
-          <div className="flex space-x-2">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+          <h2 className="text-2xl font-bold">Dashboard</h2>
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
             <select
               value={exportFormat}
               onChange={(e) => setExportFormat(e.target.value as 'pdf' | 'excel')}
@@ -443,14 +443,14 @@ const Dashboard: React.FC = () => {
               <option value="excel">Excel</option>
             </select>
             <button
-              className="btn-outline"
+              className="btn-outline text-sm whitespace-nowrap"
               onClick={handleExportData}
               disabled={exporting}
             >
-              {exporting ? 'Exporting…' : 'Export Data'}
+              {exporting ? 'Exporting…' : 'Export'}
             </button>
             <button
-              className="btn-primary"
+              className="btn-primary text-sm whitespace-nowrap"
               onClick={handleAddFunds}
               disabled={depositLoading}
             >
@@ -459,7 +459,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2">
             <div className="grid grid-cols-1 gap-6">
               <PortfolioSummary data={portfolioSummary} />
@@ -517,6 +517,11 @@ const Dashboard: React.FC = () => {
                       <p className="mt-2 text-sm text-gray-300">Tag/Memo: {depositInfo.tag}</p>
                     )}
                     <p className="mt-2 text-sm text-gray-300">Network: {depositInfo.network}</p>
+                    {depositInfo.note && (
+                      <p className="mt-3 p-2 rounded bg-blue-900/30 border border-blue-700/50 text-xs text-blue-300">
+                        ℹ️ {depositInfo.note}
+                      </p>
+                    )}
                     {depositInfo.url && (
                       <p className="mt-2">
                         <a href={depositInfo.url} target="_blank" rel="noreferrer" className="text-primary underline">
@@ -529,6 +534,7 @@ const Dashboard: React.FC = () => {
                     className="btn-primary w-full"
                     onClick={() => {
                       navigator.clipboard.writeText(depositInfo.address);
+                      toast.success('Address copied to clipboard!');
                     }}
                   >
                     Copy Address
