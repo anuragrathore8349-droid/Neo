@@ -10,6 +10,7 @@ export interface MarketAsset {
   marketCap?: number;
   volume24h?: number;
   logo?: string;
+  priceUnavailable?: boolean;
 }
 
 export interface MarketSummary {
@@ -41,7 +42,24 @@ export async function getMarketAssets(): Promise<ApiResponse<MarketAsset[]>> {
   const response = await apiFetch('/api/market/assets');
   return {
     status: response.status || 'success',
+    data: response.data || response || [],
+  };
+}
+
+export async function getMarketAssetsWithTimeframe(timeframe: string = '24h'): Promise<ApiResponse<MarketAsset[]>> {
+  const response = await apiFetch(`/api/market/assets?timeframe=${timeframe}`);
+  return {
+    status: response.status || 'success',
     data: response.data || response || []
+  };
+}
+
+export async function getMarketSummary(timeframe?: string): Promise<ApiResponse<MarketSummary>> {
+  const url = timeframe ? `/api/market/summary?timeframe=${timeframe}` : '/api/market/summary';
+  const response = await apiFetch(url);
+  return {
+    status: response.status || 'success',
+    data: response.data || response || {},
   };
 }
 
@@ -50,7 +68,7 @@ export async function getMarketPrices(symbols: string[]): Promise<ApiResponse<Re
   const response = await apiFetch(`/api/market/prices?symbols=${symbolsParam}`);
   return {
     status: response.status || 'success',
-    data: response.data || response || {}
+    data: response.data || response || {},
   };
 }
 
@@ -64,13 +82,10 @@ export async function getPriceHistory(
   params.append('interval', interval);
   if (from) params.append('from', from);
   if (to) params.append('to', to);
-  
-  const response = await apiFetch(
-    `/api/market/history/${symbol}?${params.toString()}`
-  );
+  const response = await apiFetch(`/api/market/history/${symbol}?${params.toString()}`);
   return {
     status: response.status || 'success',
-    data: response.data || response || {}
+    data: response.data || response || {},
   };
 }
 
@@ -78,90 +93,10 @@ export async function getTrendingAssets(): Promise<ApiResponse<MarketAsset[]>> {
   return apiFetch<ApiResponse<MarketAsset[]>>('/api/market/trending');
 }
 
-export async function getMarketSummary(timeframe?: string): Promise<ApiResponse<MarketSummary>> {
-  const url = timeframe ? `/api/market/summary?timeframe=${timeframe}` : '/api/market/summary';
-  const response = await apiFetch(url);
+export async function searchMarketAssets(query: string): Promise<ApiResponse<MarketAsset[]>> {
+  const response = await apiFetch(`/api/market/search?q=${encodeURIComponent(query)}`);
   return {
     status: response.status || 'success',
-    data: response.data || response || {
-      totalMarketCap: 0,
-      volume24h: 0,
-      btcDominance: 0,
-      fearGreedIndex: 0
-    }
-  };
-}
-
-// ✅ ADD — Watchlist API functions:
-export async function getWatchlist(): Promise<ApiResponse<string[]>> {
-  const response = await apiFetch('/api/market/watchlist');
-  return {
-    status: response.status || 'success',
-    data: response.data || []
-  };
-}
-
-export async function addToWatchlist(symbol: string): Promise<ApiResponse<string[]>> {
-  const response = await apiFetch(`/api/market/watchlist/${encodeURIComponent(symbol)}`, {
-    method: 'POST'
-  });
-  return {
-    status: response.status || 'success',
-    data: response.data || []
-  };
-}
-
-export async function removeFromWatchlist(symbol: string): Promise<ApiResponse<string[]>> {
-  const response = await apiFetch(`/api/market/watchlist/${encodeURIComponent(symbol)}`, {
-    method: 'DELETE'
-  });
-  return {
-    status: response.status || 'success',
-    data: response.data || []
-  };
-}
-
-// ✅ ADD — Price Alert API functions:
-export interface PriceAlert {
-  _id: string;
-  symbol: string;
-  condition: 'above' | 'below';
-  targetPrice: number;
-  notificationTypes: string[];
-  triggered: boolean;
-  createdAt: string;
-}
-
-export async function getPriceAlerts(): Promise<ApiResponse<PriceAlert[]>> {
-  const response = await apiFetch('/api/market/alerts');
-  return {
-    status: response.status || 'success',
-    data: response.data || []
-  };
-}
-
-export async function createPriceAlert(payload: {
-  symbol: string;
-  type: 'above' | 'below';
-  price: number;
-  notificationTypes?: string[];
-}): Promise<ApiResponse<PriceAlert>> {
-  const response = await apiFetch('/api/market/alerts', {
-    method: 'POST',
-    body: payload
-  });
-  return {
-    status: response.status || 'success',
-    data: response.data
-  };
-}
-
-export async function deletePriceAlert(alertId: string): Promise<ApiResponse<null>> {
-  const response = await apiFetch(`/api/market/alerts/${encodeURIComponent(alertId)}`, {
-    method: 'DELETE'
-  });
-  return {
-    status: response.status || 'success',
-    data: null
+    data: response.data || response || [],
   };
 }
