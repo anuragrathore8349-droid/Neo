@@ -23,6 +23,14 @@ import Wallet from './pages/wallet/Wallet.tsx';
 import DeFiOverview from './pages/DeFi/Overview.tsx';
 import AIInsights from './pages/AIInsights/AIInsights.tsx';
 import LearningCenter from './pages/Learning/LearningCenter.tsx';
+import ArticleDetail from './pages/Learning/ArticleDetail.tsx';
+import FeaturesPage from './pages/static/FeaturesPage.tsx';
+import PricingPage from './pages/static/PricingPage.tsx';
+import SecurityPage from './pages/static/SecurityPage.tsx';
+import AboutPage from './pages/static/AboutPage.tsx';
+import ContactPage from './pages/static/ContactPage.tsx';
+import LegalPage from './pages/static/LegalPage.tsx';
+import RoadmapPage from './pages/static/RoadmapPage.tsx';
 import SecurityCenter from './pages/Security/SecurityCenter.tsx';
 import Settings from './pages/Settings/index.tsx';
 import ProfilePage from './pages/profile/ProfilePage.tsx';
@@ -82,6 +90,18 @@ function AppRoutes() {
       <Route path="/select-plan" element={<ProtectedRoute><PlanSelection /></ProtectedRoute>} />
       <Route path="/subscription-success" element={<ProtectedRoute><SubscriptionSuccess /></ProtectedRoute>} />
       <Route path="/subscription-cancelled" element={<ProtectedRoute><SubscriptionCancelled /></ProtectedRoute>} />
+
+      {/* Static / Public landing pages */}
+      <Route path="/features" element={<FeaturesPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
+      <Route path="/security-info" element={<SecurityPage />} />
+      <Route path="/roadmap" element={<RoadmapPage />} />
+      <Route path="/about" element={<AboutPage />} />
+      <Route path="/contact" element={<ContactPage />} />
+      <Route path="/terms" element={<LegalPage defaultTab="terms" />} />
+      <Route path="/privacy" element={<LegalPage defaultTab="privacy" />} />
+      <Route path="/cookies" element={<LegalPage defaultTab="cookies" />} />
+      <Route path="/learning/article/:id" element={<ArticleDetail />} />
 
       <Route element={<MainLayout sidebarOpen={sidebarOpen} toggleSidebar={toggleSidebar} />}>
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
