@@ -293,9 +293,12 @@ const LandingPage: React.FC = () => {
                     </li>
                   ))}
                 </ul>
-                <button className={`w-full py-2 rounded-lg font-medium ${plan.popular ? 'btn-primary' : 'btn-outline'}`}>
+                <Link
+                  to={plan.name === 'Enterprise' ? '/contact' : '/register'}
+                  className={`block text-center w-full py-2 rounded-lg font-medium transition-colors ${plan.popular ? 'btn-primary' : 'btn-outline'}`}
+                >
                   {plan.cta}
-                </button>
+                </Link>
               </motion.div>
             ))}
           </div>
@@ -340,30 +343,29 @@ const LandingPage: React.FC = () => {
             <div>
               <h4 className="text-lg font-semibold mb-4">Product</h4>
               <ul className="space-y-2">
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Features</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Pricing</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Security</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Roadmap</a></li>
+                <li><a href="#features" className="text-dark-300 hover:text-light transition-colors">Features</a></li>
+                <li><a href="#pricing" className="text-dark-300 hover:text-light transition-colors">Pricing</a></li>
+                <li><Link to="/security-info" className="text-dark-300 hover:text-light transition-colors">Security</Link></li>
               </ul>
             </div>
             
             <div>
               <h4 className="text-lg font-semibold mb-4">Resources</h4>
               <ul className="space-y-2">
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Documentation</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">API</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Guides</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Blog</a></li>
+                <li><Link to="/" className="text-dark-300 hover:text-light transition-colors">Documentation</Link></li>
+                <li><Link to="/"  className="text-dark-300 hover:text-light transition-colors">API</Link></li>
+                <li><Link to="/" className="text-dark-300 hover:text-light transition-colors">Guides</Link></li>
+                <li><Link to="/" className="text-dark-300 hover:text-light transition-colors">Blog</Link></li>
               </ul>
             </div>
             
             <div>
               <h4 className="text-lg font-semibold mb-4">Company</h4>
               <ul className="space-y-2">
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">About</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Careers</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Contact</a></li>
-                <li><a href="#" className="text-dark-300 hover:text-light transition-colors">Legal</a></li>
+                <li><Link to="/about" className="text-dark-300 hover:text-light transition-colors">About</Link></li>
+                <li><Link to="/contact" className="text-dark-300 hover:text-light transition-colors">Careers</Link></li>
+                <li><Link to="/contact" className="text-dark-300 hover:text-light transition-colors">Contact</Link></li>
+                <li><Link to="/terms" className="text-dark-300 hover:text-light transition-colors">Legal</Link></li>
               </ul>
             </div>
           </div>
@@ -371,9 +373,9 @@ const LandingPage: React.FC = () => {
           <div className="border-t border-dark-700 pt-8 flex flex-col md:flex-row justify-between items-center">
             <p className="text-dark-400 mb-4 md:mb-0">© 2025 NeoFin. All rights reserved.</p>
             <div className="flex space-x-6">
-              <a href="#" className="text-dark-400 hover:text-light transition-colors">Terms</a>
-              <a href="#" className="text-dark-400 hover:text-light transition-colors">Privacy</a>
-              <a href="#" className="text-dark-400 hover:text-light transition-colors">Cookies</a>
+              <Link to="/terms" className="text-dark-400 hover:text-light transition-colors">Terms</Link>
+              <Link to="/privacy" className="text-dark-400 hover:text-light transition-colors">Privacy</Link>
+              <Link to="/cookies" className="text-dark-400 hover:text-light transition-colors">Cookies</Link>
             </div>
           </div>
         </div>
