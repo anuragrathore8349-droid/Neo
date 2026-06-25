@@ -28,19 +28,17 @@ import Settings from './pages/Settings/index.tsx';
 import ProfilePage from './pages/profile/ProfilePage.tsx';
 import Analytics from './pages/Analytics';
 import Notifications from './pages/Notifications';
+import Markets from './pages/Markets/index.tsx';
+
 // Components
 import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
 
-
 // Context
 import { AuthProvider, useAuth } from './context/AuthContext';
 
-
-// Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
-  
   if (isLoading) {
     return (
       <div className="min-h-screen bg-dark-900 flex items-center justify-center">
@@ -48,15 +46,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
       </div>
     );
   }
-  
-  if (!isAuthenticated) {
-    return <Navigate to="/login" />;
-  }
-  
+  if (!isAuthenticated) return <Navigate to="/login" />;
   return <>{children}</>;
 };
 
-const MainLayout: React.FC<{ sidebarOpen: boolean, toggleSidebar: () => void }> = ({ sidebarOpen, toggleSidebar }) => (
+const MainLayout: React.FC<{ sidebarOpen: boolean; toggleSidebar: () => void }> = ({ sidebarOpen, toggleSidebar }) => (
   <div className="min-h-screen bg-dark-900 text-light">
     <Header toggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
     <div className="flex">
@@ -72,10 +66,7 @@ const MainLayout: React.FC<{ sidebarOpen: boolean, toggleSidebar: () => void }> 
 
 function AppRoutes() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  const toggleSidebar = () => {
-    setSidebarOpen(!sidebarOpen);
-  };
+  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
   return (
     <Routes>
@@ -88,85 +79,27 @@ function AppRoutes() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/two-factor" element={<TwoFactorAuth />} />
-      <Route path="/select-plan" element={
-        <ProtectedRoute>
-          <PlanSelection />
-        </ProtectedRoute>
-      } />
-      <Route path="/subscription-success" element={
-        <ProtectedRoute>
-          <SubscriptionSuccess />
-        </ProtectedRoute>
-      } />
-      <Route path="/subscription-cancelled" element={
-        <ProtectedRoute>
-          <SubscriptionCancelled />
-        </ProtectedRoute>
-      } />
-      
+      <Route path="/select-plan" element={<ProtectedRoute><PlanSelection /></ProtectedRoute>} />
+      <Route path="/subscription-success" element={<ProtectedRoute><SubscriptionSuccess /></ProtectedRoute>} />
+      <Route path="/subscription-cancelled" element={<ProtectedRoute><SubscriptionCancelled /></ProtectedRoute>} />
+
       <Route element={<MainLayout sidebarOpen={sidebarOpen} toggleSidebar={toggleSidebar} />}>
-        <Route path="/dashboard" element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        } />
-        <Route path="/portfolio" element={
-          <ProtectedRoute>
-            <Portfolio />
-          </ProtectedRoute>
-        } />
-        <Route path="/trading" element={
-          <ProtectedRoute>
-            <Trading />
-          </ProtectedRoute>
-        } />
-        <Route path="/wallet" element={
-          <ProtectedRoute>
-            <Wallet />
-          </ProtectedRoute>
-        } />
-        <Route path="/defi" element={
-          <ProtectedRoute>
-            <DeFiOverview />
-          </ProtectedRoute>
-        } />
-        <Route path="/ai-insights" element={
-          <ProtectedRoute>
-            <AIInsights />
-          </ProtectedRoute>
-        } />
-        <Route path="/learning" element={
-          <ProtectedRoute>
-            <LearningCenter />
-          </ProtectedRoute>
-        } />
-        <Route path="/security" element={
-          <ProtectedRoute>
-            <SecurityCenter />
-          </ProtectedRoute>
-        } />
-        <Route path="/settings" element={
-          <ProtectedRoute>
-            <Settings />
-          </ProtectedRoute>
-        } />
-        <Route path="/analytics" element={
-          <ProtectedRoute>
-            <Analytics />
-          </ProtectedRoute>
-        } />
-        <Route path="/profile" element={
-          <ProtectedRoute>
-            <ProfilePage />
-          </ProtectedRoute>
-        } />
-        <Route path="/notifications" element={
-          <ProtectedRoute>
-            <Notifications />
-          </ProtectedRoute>
-        } />
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/portfolio" element={<ProtectedRoute><Portfolio /></ProtectedRoute>} />
+        <Route path="/trading" element={<ProtectedRoute><Trading /></ProtectedRoute>} />
+        <Route path="/wallet" element={<ProtectedRoute><Wallet /></ProtectedRoute>} />
+        <Route path="/defi" element={<ProtectedRoute><DeFiOverview /></ProtectedRoute>} />
+        <Route path="/ai-insights" element={<ProtectedRoute><AIInsights /></ProtectedRoute>} />
+        <Route path="/learning" element={<ProtectedRoute><LearningCenter /></ProtectedRoute>} />
+        <Route path="/security" element={<ProtectedRoute><SecurityCenter /></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+        <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+        <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+        {/* NEW Markets page */}
+        <Route path="/markets" element={<ProtectedRoute><Markets /></ProtectedRoute>} />
       </Route>
-      {/* Fallback Route */}
+
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
