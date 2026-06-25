@@ -67,6 +67,7 @@ const Wallet: React.FC = () => {
   // UI state
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
@@ -84,9 +85,13 @@ const Wallet: React.FC = () => {
     new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   // Load all wallet data
-  const loadWalletData = async () => {
+  const loadWalletData = async (isBackgroundRefresh = false) => {
     try {
-      setLoading(true);
+      if (isBackgroundRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
 
       // Parallel load: wallets, transactions, address book, gas prices
@@ -135,9 +140,12 @@ const Wallet: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Failed to load wallet data:', err);
-      setError(err.message || 'Failed to load wallet data');
+      if (!isBackgroundRefresh) {
+        setError(err.message || 'Failed to load wallet data');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -174,8 +182,8 @@ const Wallet: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadWalletData();
-    const interval = setInterval(loadWalletData, 30000); // Refresh every 30s
+    loadWalletData(false); // initial load — show full loading spinner
+    const interval = setInterval(() => loadWalletData(true), 30000); // background refresh — no spinner
     return () => clearInterval(interval);
   }, []);
 
@@ -304,7 +312,13 @@ const Wallet: React.FC = () => {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto relative">
+      {refreshing && (
+        <div className="fixed top-4 right-4 z-50 bg-dark-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2">
+          <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          Updating wallet data...
+        </div>
+      )}
       {/* Header */}
       <WalletHeader 
         isConnecting={connecting}
