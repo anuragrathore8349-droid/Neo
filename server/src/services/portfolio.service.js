@@ -333,7 +333,8 @@ try {
       '1m': 30,
       '3m': 90,
       '6m': 180,
-      '1y': 365
+      '1y': 365,
+      'all': 3650,   // ~10 years — returns all available history
     };
     return timeframes[timeframe] || 30;
   }
