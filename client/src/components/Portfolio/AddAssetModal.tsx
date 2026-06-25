@@ -8,13 +8,29 @@ interface AddAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAssetAdded: () => void;
+  initialAsset?: {
+    symbol: string;
+    name?: string;
+    type?: string;
+  } | null;
 }
 
-const AddAssetModal: React.FC<AddAssetModalProps> = ({ isOpen, onClose, onAssetAdded }) => {
+const AddAssetModal: React.FC<AddAssetModalProps> = ({ isOpen, onClose, onAssetAdded, initialAsset }) => {
   const [form, setForm] = useState({
     symbol: '', name: '', type: 'crypto' as const,
     amount: '', costBasis: '', purchaseDate: '',
   });
+
+  React.useEffect(() => {
+    if (isOpen && initialAsset) {
+      setForm(prev => ({
+        ...prev,
+        symbol: initialAsset.symbol.toUpperCase(),
+        name: initialAsset.name || initialAsset.symbol.toUpperCase(),
+        type: (initialAsset.type as any) || 'crypto',
+      }));
+    }
+  }, [isOpen, initialAsset]);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
