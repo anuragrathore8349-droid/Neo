@@ -385,13 +385,33 @@ class AIService {
       logger.debug('Generating strategy recommendations');
 
       const assets = Array.isArray(portfolio) ? portfolio : (portfolio?.assets || []);
-      
+
       if (!Array.isArray(assets) || assets.length === 0) {
         throw new Error('Valid portfolio required');
       }
 
-      // Use statistical approach directly (no OpenAI dependency)
       const portfolioObj = Array.isArray(portfolio) ? { assets: portfolio } : portfolio;
+
+      // Try OpenAI first if configured
+      if (this.hasOpenAI) {
+        try {
+          const marketConditions = await this.assessMarketConditions();
+          const aiRecommendation = await generateStrategyRecommendation(portfolioObj, marketConditions);
+          if (aiRecommendation) {
+            const strategies = Array.isArray(aiRecommendation) ? aiRecommendation : [aiRecommendation];
+            return {
+              strategies,
+              methodology: 'openai',
+              confidence: 'high',
+              lastUpdated: new Date().toISOString()
+            };
+          }
+        } catch (aiError) {
+          logger.warn('OpenAI strategy failed, falling back to statistical:', aiError.message);
+        }
+      }
+
+      // Statistical fallback
       const recommendation = await this.getStatisticalStrategyRecommendation(portfolioObj, preferences);
       return {
         strategies: Array.isArray(recommendation) ? recommendation : [recommendation],
