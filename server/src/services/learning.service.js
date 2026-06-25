@@ -66,21 +66,48 @@ class LearningService {
   }
 
   async getLiveNews(symbol = null) {
+    // Try CoinDesk RSS (no auth needed, always available)
     try {
-      const url = symbol
-        ? `https://cryptopanic.com/api/v1/posts/?auth_token=free&currencies=${symbol}&kind=news`
-        : `https://cryptopanic.com/api/v1/posts/?auth_token=free&kind=news`;
-      const resp = await axios.get(url, { timeout: 8000 });
-      return (resp.data?.results || []).slice(0, 20).map(item => ({
+      const Parser = require('rss-parser');
+      const parser = new Parser({ timeout: 8000 });
+      const feed = await parser.parseURL('https://www.coindesk.com/arc/outboundfeeds/rss/');
+      const items = (feed.items || []).slice(0, 20);
+      const symbolUpper = symbol?.toUpperCase();
+      const filtered = symbolUpper
+        ? items.filter(item => (item.title + (item.contentSnippet || '')).toUpperCase().includes(symbolUpper))
+        : items;
+      return (filtered.length > 0 ? filtered : items).slice(0, 12).map(item => ({
+        title: item.title || 'Crypto News',
+        url: item.link || '#',
+        description: item.contentSnippet?.slice(0, 200) || '',
+        publishedAt: item.pubDate || new Date().toISOString(),
+        source: 'CoinDesk',
+        currencies: symbolUpper ? [symbolUpper] : [],
+        sentiment: 'neutral',
+        timestamp: item.pubDate || new Date().toISOString(),
+      }));
+    } catch (rssErr) {
+      logger.warn('CoinDesk RSS fetch failed:', rssErr.message);
+    }
+
+    // Final fallback: CryptoCompare (completely free, no auth)
+    try {
+      const resp = await axios.get(
+        `https://min-api.cryptocompare.com/data/v2/news/?lang=EN${symbol ? `&categories=${symbol}` : ''}`,
+        { timeout: 8000 }
+      );
+      return (resp.data?.Data || []).slice(0, 12).map(item => ({
         title: item.title,
         url: item.url,
-        publishedAt: item.published_at,
-        source: item.source?.title || 'CryptoPanic',
-        currencies: (item.currencies || []).map(c => c.code),
-        sentiment: item.votes?.positive > item.votes?.negative ? 'positive' : 'neutral',
+        description: item.body?.slice(0, 200) || '',
+        publishedAt: new Date(item.published_on * 1000).toISOString(),
+        source: item.source_info?.name || item.source || 'CryptoCompare',
+        currencies: (item.categories || '').split('|').filter(Boolean),
+        sentiment: 'neutral',
+        timestamp: new Date(item.published_on * 1000).toISOString(),
       }));
-    } catch (err) {
-      logger.warn('Live news fetch failed:', err.message);
+    } catch (fallbackErr) {
+      logger.warn('CryptoCompare news fetch failed:', fallbackErr.message);
       return [];
     }
   }
