@@ -204,17 +204,15 @@ const explainNewsImpact = async (symbol, newsTitle, category) => {
       return buildNewsImpactFallback(symbol, newsTitle, category);
     }
 
-    // For news analysis, skip OpenAI on free tier to avoid rate limits
-    // Free tier is too limited for concurrent news analysis
-    if (config.openai.rateLimitRPM < 10) {
-      logger.debug(`Skipping OpenAI for news (rate limit ${config.openai.rateLimitRPM} RPM too low)`);
-      return buildNewsImpactFallback(symbol, newsTitle, category);
-    }
-
+    // Queue handles rate limiting — no need to skip based on RPM config
     const prompt = buildNewsPrompt(symbol, newsTitle, category);
-    const response = await callOpenAI(prompt, 'concise');
+    const response = await callOpenAIWithRetry(
+      () => callOpenAI(prompt, 'concise'),
+      buildNewsImpactFallback(symbol, newsTitle, category),
+      2
+    );
 
-    return response;
+    return response || buildNewsImpactFallback(symbol, newsTitle, category);
   } catch (error) {
     logger.warn(`⚠️ Failed to explain news impact for ${symbol}:`, error.message);
     return buildNewsImpactFallback(symbol, newsTitle, category);
@@ -311,6 +309,7 @@ const callOpenAI = async (prompt, format = 'text') => {
       logger.error('❌ OpenAI API key invalid or expired');
     } else if (error.response?.status === 429) {
       logger.warn('⚠️ OpenAI API rate limit exceeded (max retries reached)');
+      logger.debug('OpenAI 429 response payload:', error.response.data);
     } else if (error.code === 'ECONNABORTED') {
       logger.warn('⚠️ OpenAI API timeout after 15s');
     } else if (error.response) {
@@ -331,20 +330,16 @@ const callOpenAI = async (prompt, format = 'text') => {
  * Wrapper to handle OpenAI calls with graceful fallback on rate limits
  * Returns fallback response instead of throwing on errors
  */
-const callOpenAIWithRetry = async (fn, fallback = null, maxRetries = 2) => {
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (err?.response?.status === 429 && i < maxRetries) {
-        const delayMs = 2000 * (i + 1);
-        logger.warn(`OpenAI rate limit (attempt ${i + 1}), retrying in ${delayMs}ms`);
-        await new Promise(r => setTimeout(r, delayMs));
-        continue;
-      }
-      logger.warn(`OpenAI call failed (attempt ${i + 1}):`, err?.message);
-      return fallback;
+const callOpenAIWithRetry = async (fn, fallback = null) => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err?.response?.status === 429) {
+      logger.warn('⚠️ OpenAI rate limit exceeded after retry attempts, returning fallback.');
+    } else {
+      logger.warn('OpenAI call failed:', err?.message);
     }
+    return fallback;
   }
 };
 
