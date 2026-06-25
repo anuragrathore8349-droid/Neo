@@ -46,8 +46,8 @@ module.exports = {
   },
 
   openai: {
-    apiKey:        process.env.OPENAI_API_KEY  || null,
-    model:         process.env.OPENAI_MODEL    || 'gpt-3.5-turbo',
+    apiKey:        process.env.OPENAI_API_KEY?.trim()  || null,
+    model:         process.env.OPENAI_MODEL?.trim()    || 'gpt-3.5-turbo',
     maxTokens:     parseInt(process.env.OPENAI_MAX_TOKENS, 10)     || 150,
     rateLimitRPM:  parseInt(process.env.OPENAI_RATE_LIMIT_RPM, 10) || 3,
     rateLimitTPM:  parseInt(process.env.OPENAI_RATE_LIMIT_TPM, 10) || 40000,
