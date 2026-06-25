@@ -30,7 +30,8 @@ const { CRYPTO_SYMBOLS } = require('../utils/assetTypes');
  */
 class AIService {
   constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const config = require('../config');
+    const apiKey = config.openai?.apiKey;
     if (apiKey && apiKey !== 'your-openai-api-key-here') {
       this.hasOpenAI = true;
       logger.info('OpenAI API configured for enhanced insights');
@@ -1040,49 +1041,54 @@ class AIService {
   async fetchFromCryptoPanic(symbols, limit = 10) {
     try {
       const axios = require('axios');
-      
+
       // CryptoPanic free API endpoint (no auth needed for basic tier)
-      const url = 'https://cryptopanic.com/api/v1/posts/';
-// REPLACE existing params object with:
-const params = {
-  kind: 'news',
-  filter: 'hot',      // 'hot' gives more relevant news than 'trending'
-  limit: Math.min(limit, 20),
-  public: 'true',
-  currencies: symbols.slice(0, 5).join(',')  // Filter by your symbols
-};
+      const url = 'https://cryptopanic.com/api/free/v1/posts/';
+      const params = {
+        auth_token: process.env.CRYPTOPANIC_API_KEY || '',
+        kind: 'news',
+        filter: 'hot',
+        limit: Math.min(limit, 20),
+        public: 'true',
+        currencies: symbols.slice(0, 5).join(',')
+      };
+
+      if (!params.auth_token) {
+        delete params.auth_token;
+        Object.assign(params, { public: 'true' });
+      }
+
       const response = await axios.get(url, { params, timeout: 5000 });
-      
+
       if (!response.data || !response.data.results) {
         return [];
       }
 
-      // Format CryptoPanic data
       return response.data.results.slice(0, limit).map((item) => {
-        // Try to get the most relevant symbol from the article
-        const articleSymbol = item.currencies?.[0]?.code 
-          || symbols.find(s => item.title?.toUpperCase().includes(s))
-          || symbols[0] 
-          || 'CRYPTO';
-        
-        const posVotes = item.votes?.positive || 0;
-        const negVotes = item.votes?.negative || 0;
-        const totalVotes = posVotes + negVotes;
+        const articleSymbol =
+          item.currencies?.[0]?.code ||
+          symbols.find(s => item.title?.toUpperCase().includes(s)) ||
+          symbols[0] ||
+          'CRYPTO';
+
+        const posVotes    = item.votes?.positive || 0;
+        const negVotes    = item.votes?.negative || 0;
+        const totalVotes  = posVotes + negVotes;
         const sentimentScore = totalVotes > 0 ? posVotes / totalVotes : 0.5;
-        
+
         return {
-          title: item.title,
-          summary: item.body?.substring(0, 200) || item.title,
-          category: item.kind || 'general',
-          symbol: articleSymbol,
-          source: item.source?.title || 'CryptoPanic',
-          url: item.url || item.source?.url,
-          sentiment: sentimentScore > 0.6 ? 'positive' : sentimentScore < 0.4 ? 'negative' : 'neutral',
+          title:         item.title,
+          summary:       item.body?.substring(0, 200) || item.title,
+          category:      item.kind || 'general',
+          symbol:        articleSymbol,
+          source:        item.source?.title || 'CryptoPanic',
+          url:           item.url || item.source?.url,
+          sentiment:     sentimentScore > 0.6 ? 'positive' : sentimentScore < 0.4 ? 'negative' : 'neutral',
           sentimentScore,
-          timestamp: item.created_at || new Date().toISOString(),
-          confidence: Math.min(0.95, 0.65 + (totalVotes / 100)),  // More votes = higher confidence
-          type: 'news',
-          votes: { positive: posVotes, negative: negVotes }
+          timestamp:     item.created_at || new Date().toISOString(),
+          confidence:    Math.min(0.95, 0.65 + totalVotes / 100),
+          type:          'news',
+          votes:         { positive: posVotes, negative: negVotes },
         };
       });
     } catch (error) {
