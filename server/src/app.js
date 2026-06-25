@@ -59,6 +59,11 @@ app.get('/health', (req, res) => {
     status: 'ok',
     message: 'Server is running',
     websocket: { connections: wsServer.getConnectedClientsCount?.() || 0 },
+    openai: {
+      enabled: Boolean(config.openai?.apiKey),
+      model: config.openai?.model || 'not configured',
+      rateLimitRPM: config.openai?.rateLimitRPM || null,
+    }
   });
 });
 
@@ -101,12 +106,15 @@ async function startServer() {
 
     // Auto-seed learning content if DB is empty
     try {
-      const { Article } = require('./models/learning.model');
-      const count = await Article.countDocuments();
-      if (count === 0) {
-        console.log('📚 Seeding learning content...');
-        const { seedLearningContent } = require('./utils/seed-learning');
-        await seedLearningContent();
+      const { Article, Video } = require('./models/learning.model');
+      const [articleCount, videoCount] = await Promise.all([
+        Article.estimatedDocumentCount(),
+        Video.estimatedDocumentCount(),
+      ]);
+      if (articleCount === 0 && videoCount === 0) {
+        console.log('📚 Learning DB is empty — running seed...');
+        const seedDB = require('./utils/seed-learning');
+        await seedDB();
         console.log('✅ Learning content seeded');
       }
     } catch (err) {
@@ -159,7 +167,10 @@ async function startServer() {
     });
 
   } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
+    console.error('❌ Failed to start server:', error);
+    if (error?.stack) {
+      console.error(error.stack);
+    }
     process.exit(1);
   }
 }
