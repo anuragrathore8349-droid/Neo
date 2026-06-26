@@ -59,10 +59,11 @@ app.get('/health', (req, res) => {
     status: 'ok',
     message: 'Server is running',
     websocket: { connections: wsServer.getConnectedClientsCount?.() || 0 },
-    openai: {
-      enabled: Boolean(config.openai?.apiKey),
-      model: config.openai?.model || 'not configured',
-      rateLimitRPM: config.openai?.rateLimitRPM || null,
+    ai: {
+      enabled: Boolean(config.gemini?.apiKey),
+      model: config.gemini?.model || 'not configured',
+      provider: 'Google Gemini',
+      maxTokens: config.gemini?.maxTokens || 300,
     }
   });
 });
