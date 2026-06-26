@@ -45,22 +45,20 @@ module.exports = {
     credentials:    true,
   },
 
-  openai: {
-    apiKey:        process.env.OPENAI_API_KEY?.trim()  || null,
-    model:         process.env.OPENAI_MODEL?.trim()    || 'gpt-3.5-turbo',
-    maxTokens:     parseInt(process.env.OPENAI_MAX_TOKENS, 10)     || 150,
-    rateLimitRPM:  parseInt(process.env.OPENAI_RATE_LIMIT_RPM, 10) || 3,
-    rateLimitTPM:  parseInt(process.env.OPENAI_RATE_LIMIT_TPM, 10) || 40000,
+gemini: {
+    apiKey:    process.env.GEMINI_API_KEY?.trim() || null,
+    model:     'gemini-2.5-flash',
+    maxTokens: 300,
+    // Free tier: 15 RPM, 1500 RPD — we stay well within by caching
   },
 
   apis: {
-    openai:        process.env.OPENAI_API_KEY,
-    coinGecko:     process.env.COINGECKO_API_KEY,
-    etherscan:     process.env.ETHERSCAN_API_KEY,
-    yahooFinance:  process.env.YAHOO_FINANCE_API_KEY,
-    alphaVantage:  process.env.ALPHA_VANTAGE_API_KEY,
+    gemini:       process.env.GEMINI_API_KEY,
+    coinGecko:    process.env.COINGECKO_API_KEY,
+    etherscan:    process.env.ETHERSCAN_API_KEY,
+    yahooFinance: process.env.YAHOO_FINANCE_API_KEY,
+    alphaVantage: process.env.ALPHA_VANTAGE_API_KEY,
   },
-
   blockchain: {
     ethereum: {
       rpcUrl:  process.env.ETH_RPC_URL,
