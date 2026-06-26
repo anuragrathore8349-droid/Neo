@@ -3,22 +3,24 @@ const { logger } = require('../api/middlewares/logger.middleware');
 const config = require('../config');
 
 /**
- * OpenAI Integration for Financial Insights
- * Provides human-readable explanations of market anomalies and patterns
- * No ML framework dependency - uses LLM API calls
- * 
- * INCLUDES: Rate limiting, exponential backoff, and request queuing
+ * Gemini AI Integration for Financial Insights
+ * Model: gemini-2.5-flash (free tier: 15 RPM, 1500 RPD)
+ * Strategy: In-memory cache (1hr TTL) + sequential queue to respect rate limits
  */
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-// ============= RATE LIMITING & QUEUE MANAGEMENT =============
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+// Free tier: 15 RPM → min 4000ms between requests (4s + 500ms buffer = 4500ms)
+const MIN_DELAY_MS = 4500;
+
+// ─── REQUEST QUEUE ────────────────────────────────────────────────────────────
+
 class RequestQueue {
-  constructor(maxConcurrent = 1, minDelayMs = 500) {
+  constructor() {
     this.queue = [];
-    this.running = 0;
-    this.maxConcurrent = maxConcurrent;
-    this.minDelayMs = minDelayMs;
+    this.running = false;
     this.lastRequestTime = 0;
   }
 
@@ -30,432 +32,271 @@ class RequestQueue {
   }
 
   async process() {
-    if (this.running >= this.maxConcurrent || this.queue.length === 0) {
-      return;
+    if (this.running || this.queue.length === 0) return;
+    this.running = true;
+
+    while (this.queue.length > 0) {
+      const { task, resolve, reject } = this.queue.shift();
+
+      // Enforce minimum delay between requests
+      const elapsed = Date.now() - this.lastRequestTime;
+      if (elapsed < MIN_DELAY_MS) {
+        await sleep(MIN_DELAY_MS - elapsed);
+      }
+
+      try {
+        this.lastRequestTime = Date.now();
+        resolve(await task());
+      } catch (err) {
+        reject(err);
+      }
     }
 
-    this.running++;
-    const { task, resolve, reject } = this.queue.shift();
-
-    // Enforce minimum delay between requests
-    const timeSinceLastRequest = Date.now() - this.lastRequestTime;
-    if (timeSinceLastRequest < this.minDelayMs) {
-      await new Promise(r => setTimeout(r, this.minDelayMs - timeSinceLastRequest));
-    }
-
-    try {
-      this.lastRequestTime = Date.now();
-      const result = await task();
-      resolve(result);
-    } catch (error) {
-      reject(error);
-    } finally {
-      this.running--;
-      this.process();
-    }
+    this.running = false;
   }
 }
 
-// Calculate minimum delay based on rate limit from config
-// If 3 RPM (requests per minute), delay = 60000ms / 3 = 20000ms
-// For free tier, add extra buffer (multiply by 1.5) to be extra safe
-const rateLimitRPM = config.openai?.rateLimitRPM || 3;
-const baseDelayMs = Math.ceil((60 * 1000) / rateLimitRPM);
-const minDelayMs = rateLimitRPM < 10 ? Math.ceil(baseDelayMs * 1.5) : baseDelayMs;
+const requestQueue = new RequestQueue();
 
-// Initialize request queue: max 1 concurrent request, respecting rate limits
-const requestQueue = new RequestQueue(1, minDelayMs);
+// ─── CACHE ────────────────────────────────────────────────────────────────────
 
-// Log the rate limit configuration on startup
-logger.info(`📊 OpenAI Rate Limiter: ${rateLimitRPM} RPM (${minDelayMs}ms delay between requests)`);
+const cache = new Map();
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-// ============= IN-MEMORY RESPONSE CACHE =============
-// Simple in-memory cache (survives process restarts with Redis, but memory is fine for now)
-const responseCache = new Map();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-
-const getCached = (key) => {
-  const entry = responseCache.get(key);
+function getCached(key) {
+  const entry = cache.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL_MS) {
-    responseCache.delete(key);
-    return null;
-  }
+  if (Date.now() - entry.ts > CACHE_TTL) { cache.delete(key); return null; }
   return entry.value;
-};
+}
 
-const setCache = (key, value) => {
-  responseCache.set(key, { value, ts: Date.now() });
-};
+function setCache(key, value) {
+  cache.set(key, { value, ts: Date.now() });
+}
 
-/**
- * Retry logic with exponential backoff for rate limit errors
- */
-const retryWithBackoff = async (fn, maxRetries = 3) => {
-  let lastError;
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      
-      // Check if it's a rate limit error (429)
-      if (error.response?.status === 429) {
-        // Extract retry-after header if available
-        const retryAfter = error.response.headers['retry-after'];
-        let delayMs = retryAfter ? parseInt(retryAfter) * 1000 : Math.pow(2, attempt) * 1000;
-        
-        // Cap the delay at 30 seconds
-        delayMs = Math.min(delayMs, 30000);
-        
-        if (attempt < maxRetries) {
-          logger.warn(`⚠️ Rate limit hit. Retrying in ${delayMs}ms... (Attempt ${attempt + 1}/${maxRetries})`);
-          await new Promise(r => setTimeout(r, delayMs));
-          continue;
-        }
-      }
-      
-      // For non-rate-limit errors, don't retry
-      throw error;
-    }
-  }
-  
-  throw lastError;
-};
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
 
 /**
- * Get OpenAI insights for detected anomalies
+ * Core Gemini API call — queued, cached, with retry on 429
+ * @param {string} prompt
+ * @param {'text'|'json'} format
+ * @returns {Promise<string|null>}
  */
-const getOpenAIInsights = async (anomaly) => {
-  if (!config.openai?.apiKey) {
-    logger.warn('⚠️ OpenAI API key not configured. Returning basic explanation.');
-    return getBasicExplanation(anomaly);
-  }
-
-  const prompt = buildAnomalyPrompt(anomaly);
-  const fallback = getBasicExplanation(anomaly);
-
-  const result = await callOpenAIWithRetry(
-    () => callOpenAI(prompt, 'concise'),
-    fallback,
-    2
-  );
-  return result || fallback;
-};
-
-/**
- * Get sentiment analysis using OpenAI
- * Replaces Natural.js for more accurate market sentiment
- */
-const getSentimentAnalysis = async (symbol, content) => {
-  if (!config.openai?.apiKey) {
-    return {
-      sentiment: 'neutral',
-      score: 0.5,
-      confidence: 0.5,
-      reason: 'OpenAI not configured'
-    };
-  }
-
-  const prompt = buildSentimentPrompt(symbol, content);
-  const fallback = {
-    sentiment: 'neutral',
-    score: 0.5,
-    confidence: 0.3,
-    reason: 'Analysis unavailable'
-  };
-
-  const response = await callOpenAIWithRetry(
-    () => callOpenAI(prompt, 'json'),
-    fallback,
-    2
-  );
-
-  return response ? parseSentimentResponse(response) : fallback;
-};
-
-/**
- * Generate investment strategy recommendations
- */
-const generateStrategyRecommendation = async (portfolio, marketConditions) => {
-  if (!config.openai?.apiKey) {
-    return generateBasicStrategy(portfolio);
-  }
-
-  const prompt = buildStrategyPrompt(portfolio, marketConditions);
-  const fallback = generateBasicStrategy(portfolio);
-
-  const response = await callOpenAIWithRetry(
-    () => callOpenAI(prompt, 'json'),
-    fallback,
-    2
-  );
-
-  return response ? parseStrategyResponse(response) : fallback;
-};
-
-/**
- * Explain news impact on market
- * NOTE: Non-critical feature - uses simpler fallback to avoid rate limit issues
- */
-const explainNewsImpact = async (symbol, newsTitle, category) => {
-  try {
-    if (!config.openai?.apiKey) {
-      return buildNewsImpactFallback(symbol, newsTitle, category);
-    }
-
-    // Queue handles rate limiting — no need to skip based on RPM config
-    const prompt = buildNewsPrompt(symbol, newsTitle, category);
-    const response = await callOpenAIWithRetry(
-      () => callOpenAI(prompt, 'concise'),
-      buildNewsImpactFallback(symbol, newsTitle, category),
-      2
-    );
-
-    return response || buildNewsImpactFallback(symbol, newsTitle, category);
-  } catch (error) {
-    logger.warn(`⚠️ Failed to explain news impact for ${symbol}:`, error.message);
-    return buildNewsImpactFallback(symbol, newsTitle, category);
-  }
-};
-
-// ============= INTERNAL HELPERS =============
-
-/**
- * Build prompt for anomaly explanation
- */
-const buildAnomalyPrompt = (anomaly) => {
-  return `In one sentence, explain why ${anomaly.symbol} might show a ${anomaly.type} with z-score ${anomaly.zScore} (mean: ${anomaly.mean}, value: ${anomaly.value}). Be concise and financial.`;
-};
-
-/**
- * Build prompt for sentiment analysis
- */
-const buildSentimentPrompt = (symbol, content) => {
-  return `Analyze sentiment about ${symbol} from this text: "${content}". 
-  Return JSON: {sentiment: "positive"|"negative"|"neutral", score: 0-1, confidence: 0-1}`;
-};
-
-/**
- * Build prompt for strategy recommendation
- */
-const buildStrategyPrompt = (portfolio, conditions) => {
-  return `Given portfolio: ${JSON.stringify(portfolio)} and market conditions: ${JSON.stringify(conditions)}
-  
-  Return a JSON ARRAY of 1-3 strategy objects. Each object must have:
-  { type: "conservative"|"moderate"|"aggressive", description: string, expectedReturn: number (%), 
-    risk: number (1-10), timeframe: string, rationale: string, steps: string[] }
-  
-  Return ONLY the JSON array, no explanation.`;
-};
-
-/**
- * Build prompt for news impact
- */
-const buildNewsPrompt = (symbol, title, category) => {
-  return `How would "${title}" (${category}) impact ${symbol} price in short-term (1-7 days)? 1 sentence.`;
-};
-
-/**
- * Call OpenAI API with rate limiting, exponential backoff, and request queuing
- */
-const callOpenAI = async (prompt, format = 'text') => {
-  const cacheKey = `openai:${prompt.slice(0, 120)}`;
+async function callGemini(prompt, format = 'text') {
+  const cacheKey = `gemini:${prompt.slice(0, 140)}`;
   const cached = getCached(cacheKey);
   if (cached) {
-    logger.debug('💾 OpenAI cache hit');
+    logger.debug('💾 Gemini cache hit');
     return cached;
   }
 
-  const result = await requestQueue.add(() => {
-    return retryWithBackoff(async () => {
-      const response = await axios.post(
-        OPENAI_API_URL,
-        {
-          model: config.openai.model || 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a financial market analyst. Provide concise, actionable insights.'
+  const apiKey = config.gemini?.apiKey;
+  if (!apiKey) {
+    logger.warn('⚠️ GEMINI_API_KEY not set — using fallback data');
+    return null;
+  }
+
+  return requestQueue.add(async () => {
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        const response = await axios.post(
+          `${GEMINI_API_URL}?key=${apiKey}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: config.gemini?.maxTokens || 300,
+              temperature: 0.7,
             },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.7,
-          max_tokens: config.openai.maxTokens || 150
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${config.openai.apiKey}`,
-            'Content-Type': 'application/json'
           },
-          timeout: 15000 // 15 second timeout
+          { timeout: 20000 }
+        );
+
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (!text) throw new Error('Empty Gemini response');
+
+        // Strip markdown code blocks if present (Gemini sometimes wraps JSON)
+        const clean = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+
+        setCache(cacheKey, clean);
+        logger.debug('✅ Gemini response received');
+        return clean;
+
+      } catch (err) {
+        const status = err?.response?.status;
+
+        if (status === 429) {
+          const retryAfter = parseInt(err?.response?.headers?.['retry-after'] || '0') * 1000;
+          const delay = retryAfter || Math.min(30000, Math.pow(2, attempt) * 5000);
+          logger.warn(`⚠️ Gemini rate limit (429). Retry ${attempt + 1}/3 in ${delay}ms`);
+          if (attempt < 3) { await sleep(delay); continue; }
+        } else if (status === 400) {
+          logger.error('❌ Gemini 400 Bad Request — check prompt or API key validity');
+          return null;
+        } else if (status === 403) {
+          logger.error('❌ Gemini 403 Forbidden — API key invalid or quota exceeded');
+          return null;
+        } else if (err.code === 'ECONNABORTED') {
+          logger.warn('⚠️ Gemini timeout (20s)');
+          return null;
+        } else {
+          logger.warn(`❌ Gemini error: ${err.message}`);
+          return null;
         }
-      );
-
-      const content = response.data.choices?.[0]?.message?.content?.trim();
-      
-      if (!content) {
-        throw new Error('Empty response from OpenAI');
       }
-
-      return content;
-    });
-  }).catch(error => {
-    // Log different error types
-    if (error.response?.status === 401) {
-      logger.error('❌ OpenAI API key invalid or expired');
-    } else if (error.response?.status === 429) {
-      logger.warn('⚠️ OpenAI API rate limit exceeded (max retries reached)');
-      logger.debug('OpenAI 429 response payload:', error.response.data);
-    } else if (error.code === 'ECONNABORTED') {
-      logger.warn('⚠️ OpenAI API timeout after 15s');
-    } else if (error.response) {
-      logger.warn('❌ OpenAI API error (HTTP ' + error.response.status + '):', error.response.data?.error?.message || error.message);
-    } else if (error.request) {
-      logger.warn('❌ OpenAI API request failed (no response):', error.message);
-    } else {
-      logger.warn('❌ OpenAI API error:', error.message);
     }
-    throw error;
+    logger.warn('⚠️ Gemini max retries reached — returning null (fallback will be used)');
+    return null;
   });
+}
 
-  setCache(cacheKey, result);
-  return result;
-};
+// ─── PUBLIC API ───────────────────────────────────────────────────────────────
 
 /**
- * Wrapper to handle OpenAI calls with graceful fallback on rate limits
- * Returns fallback response instead of throwing on errors
+ * Explain a detected market anomaly in one sentence
  */
-const callOpenAIWithRetry = async (fn, fallback = null, maxRetries = 2) => {
+async function getOpenAIInsights(anomaly) {
+  const prompt = `In one sentence, explain why ${anomaly.symbol} might show a ${anomaly.type} anomaly with z-score ${anomaly.zScore} (mean: ${anomaly.mean}, value: ${anomaly.value}). Be concise and financial.`;
+
+  const result = await callGemini(prompt, 'text');
+  return result || getBasicExplanation(anomaly);
+}
+
+/**
+ * Analyse text sentiment for a crypto asset
+ * Returns { sentiment, score, confidence, reason }
+ */
+async function getSentimentAnalysis(symbol, content) {
+  const fallback = { sentiment: 'neutral', score: 0.5, confidence: 0.5, reason: 'AI unavailable' };
+
+  const prompt = `Analyse the sentiment about ${symbol} from this text: "${content}". Return ONLY valid JSON (no markdown): {"sentiment":"positive"|"negative"|"neutral","score":0.0-1.0,"confidence":0.0-1.0}`;
+
+  const result = await callGemini(prompt, 'json');
+  if (!result) return fallback;
+
   try {
-    return await retryWithBackoff(fn, maxRetries);
-  } catch (err) {
-    if (err?.response?.status === 429) {
-      logger.warn('⚠️ OpenAI rate limit exceeded after retry attempts, returning fallback.');
-    } else if (err?.response?.status === 401) {
-      logger.error('❌ OpenAI API key is invalid — check OPENAI_API_KEY in .env');
-    } else {
-      logger.warn('OpenAI call failed:', err?.message);
-    }
+    const parsed = JSON.parse(result);
+    return {
+      sentiment: parsed.sentiment || 'neutral',
+      score: typeof parsed.score === 'number' ? parsed.score : 0.5,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
+      reason: 'Gemini analysis'
+    };
+  } catch {
+    const lower = result.toLowerCase();
+    if (lower.includes('positive')) return { sentiment: 'positive', score: 0.7, confidence: 0.6, reason: 'Gemini text' };
+    if (lower.includes('negative')) return { sentiment: 'negative', score: 0.3, confidence: 0.6, reason: 'Gemini text' };
     return fallback;
   }
-};
+}
 
 /**
- * Get basic explanation when OpenAI unavailable
+ * Generate investment strategy recommendations
+ * Returns array of strategy objects or a single object
  */
-const getBasicExplanation = (anomaly) => {
-  const direction = anomaly.type === 'spike' ? 'increased sharply' : 'decreased sharply';
-  const severity = anomaly.severity > 0.7 ? 'critical' : 'significant';
-  return `${anomaly.symbol} ${direction} (${severity} anomaly, z-score: ${anomaly.zScore})`;
-};
+async function generateStrategyRecommendation(portfolio, marketConditions) {
+  const fallback = generateBasicStrategy(portfolio);
+
+  const portfolioSummary = Array.isArray(portfolio?.assets)
+    ? portfolio.assets.slice(0, 5).map(a => `${a.symbol}: $${a.amount}`).join(', ')
+    : JSON.stringify(portfolio).slice(0, 200);
+
+  const prompt = `You are a crypto portfolio analyst. Given portfolio: [${portfolioSummary}] and market: trend=${marketConditions?.trend}, volatility=${marketConditions?.volatility?.toFixed(3)}.
+
+Return ONLY a JSON array (no markdown, no explanation) of 1-3 strategy objects. Each object must have exactly these keys:
+{"type":"conservative"|"moderate"|"aggressive","description":"string","expectedReturn":number,"risk":1-10,"timeframe":"string","rationale":"string","steps":["string"]}
+
+Return ONLY the JSON array.`;
+
+  const result = await callGemini(prompt, 'json');
+  if (!result) return fallback;
+
+  try {
+    const parsed = JSON.parse(result);
+    // Handle both array and single object responses
+    const strategies = Array.isArray(parsed) ? parsed : [parsed];
+    return strategies.map(s => ({
+      type: s.type || 'moderate',
+      description: s.description || 'AI-generated strategy',
+      expectedReturn: typeof s.expectedReturn === 'number' ? s.expectedReturn : 15,
+      risk: typeof s.risk === 'number' ? s.risk : 5,
+      timeframe: s.timeframe || '1-2 years',
+      rationale: s.rationale || 'Gemini recommendation',
+      steps: Array.isArray(s.steps) ? s.steps : ['Review market conditions', 'Rebalance monthly']
+    }));
+  } catch {
+    logger.warn('Failed to parse Gemini strategy JSON — using fallback');
+    return fallback;
+  }
+}
 
 /**
- * Build news impact fallback when OpenAI unavailable or rate-limited
+ * Explain the short-term impact of a news headline on a crypto asset
  */
-const buildNewsImpactFallback = (symbol, newsTitle, category) => {
+async function explainNewsImpact(symbol, newsTitle, category) {
+  const fallback = buildNewsImpactFallback(symbol, newsTitle, category);
+
+  const prompt = `How would "${newsTitle}" (category: ${category || 'general'}) impact ${symbol} price in the next 1-7 days? Answer in exactly 1 concise sentence.`;
+
+  const result = await callGemini(prompt, 'text');
+  return result || fallback;
+}
+
+// ─── FALLBACKS ────────────────────────────────────────────────────────────────
+
+function getBasicExplanation(anomaly) {
+  const dir = anomaly.type === 'spike' ? 'increased sharply' : 'decreased sharply';
+  const sev = anomaly.severity > 0.7 ? 'critical' : 'significant';
+  return `${anomaly.symbol} ${dir} (${sev} anomaly, z-score: ${anomaly.zScore?.toFixed(2)})`;
+}
+
+function buildNewsImpactFallback(symbol, newsTitle, category) {
   const categoryMap = {
-    'regulatory': 'Regulatory changes may affect market sentiment',
-    'technology': 'Technology developments impact adoption and user interest',
-    'partnership': 'Partnership announcements typically signal positive growth',
-    'market': 'Market movements affect overall sentiment',
-    'security': 'Security issues impact investor confidence',
-    'adoption': 'Adoption news drives long-term value',
+    regulatory: 'Regulatory changes may affect market sentiment and trading volumes',
+    technology: 'Technology developments impact adoption and long-term value',
+    partnership: 'Partnership announcements typically signal growth potential',
+    market:     'Market movements reflect broader sentiment shifts',
+    security:   'Security concerns temporarily reduce investor confidence',
+    adoption:   'Adoption news is a strong long-term positive signal',
   };
-  
-  const impact = categoryMap[category?.toLowerCase()] || 'Market news affecting trading sentiment';
-  return `${symbol}: ${impact}. (${category || 'General'} News)`;
-};
+  const impact = categoryMap[category?.toLowerCase()] || 'This news may influence short-term trading sentiment';
+  return `${symbol}: ${impact}. (${category || 'General'})`;
+}
 
-/**
- * Generate basic strategy without OpenAI
- */
-const generateBasicStrategy = (portfolio) => {
-  return {
-    type: 'balanced',
-    description: 'Default strategy based on portfolio composition',
+function generateBasicStrategy(portfolio) {
+  return [{
+    type: 'moderate',
+    description: 'Balanced portfolio strategy',
     expectedReturn: 12,
     risk: 5,
     timeframe: '1-2 years',
-    rationale: 'Safe default strategy',
+    rationale: 'Default balanced approach while AI is initialising',
     steps: [
-      'Maintain current allocation',
-      'Monitor market volatility',
-      'Rebalance monthly'
+      'Maintain current allocation with quarterly reviews',
+      'Monitor Bitcoin dominance as a macro indicator',
+      'Set stop-loss orders to manage downside risk',
+      'Keep 10-20% as stablecoin reserve for opportunities'
     ]
-  };
-};
+  }];
+}
 
-/**
- * Parse sentiment response from OpenAI
- */
-const parseSentimentResponse = (response) => {
-  try {
-    const json = JSON.parse(response);
-    return {
-      sentiment: json.sentiment || 'neutral',
-      score: json.score || 0.5,
-      confidence: json.confidence || 0.8,
-      reason: 'OpenAI analysis'
-    };
-  } catch {
-    // Fallback if JSON parsing fails
-    const lower = response.toLowerCase();
-    if (lower.includes('positive')) {
-      return { sentiment: 'positive', score: 0.7, confidence: 0.6 };
-    } else if (lower.includes('negative')) {
-      return { sentiment: 'negative', score: 0.3, confidence: 0.6 };
-    }
-    return { sentiment: 'neutral', score: 0.5, confidence: 0.4 };
-  }
-};
+// ─── STATUS LOG ───────────────────────────────────────────────────────────────
 
-/**
- * Parse strategy response from OpenAI
- */
-const parseStrategyResponse = (response) => {
-  try {
-    const parsed = JSON.parse(response);
-    // Ensure we have 'steps' field for frontend consistency
-    return {
-      type: parsed.type || 'moderate',
-      description: parsed.description || parsed.rationale || 'AI-generated strategy',
-      expectedReturn: parsed.expectedReturn || parsed.expected_return || 15,
-      risk: parsed.risk || parsed.riskLevel || 5,
-      timeframe: parsed.timeframe || '1-2 years',
-      rationale: parsed.rationale || 'OpenAI recommendation',
-      steps: parsed.steps || parsed.actions || ['Review strategy based on OpenAI recommendation']
-    };
-  } catch {
-    return {
-      type: 'moderate',
-      description: 'AI-generated strategy',
-      expectedReturn: 15,
-      risk: 5,
-      timeframe: '1-2 years',
-      rationale: response,
-      steps: ['Review strategy based on OpenAI recommendation']
-    };
-  }
-};
-
-// Initialize and log OpenAI status
-if (config.openai?.apiKey) {
-  logger.info('✅ OpenAI integration initialized (API key configured)');
+if (config.gemini?.apiKey) {
+  logger.info('✅ Gemini AI integration ready (gemini-2.5-flash, free tier)');
 } else {
-  logger.warn('⚠️ OpenAI integration disabled (API key not configured) - falling back to basic explanations');
+  logger.warn('⚠️ GEMINI_API_KEY not set — AI insights will use statistical fallback');
 }
 
 module.exports = {
-  getOpenAIInsights,
+  getOpenAIInsights,      // kept same name so ai.service.js imports work unchanged
   getSentimentAnalysis,
   generateStrategyRecommendation,
   explainNewsImpact,
   getBasicExplanation,
-  generateBasicStrategy
+  generateBasicStrategy,
+  callGemini,             // exported for direct use if needed
 };
