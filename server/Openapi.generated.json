@@ -1,0 +1,3035 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "NeoFin API",
+    "description": "## NeoFin — Advanced Financial Trading Platform\n\nFull REST API for portfolio management, live market data, DeFi integrations, AI-powered insights, trading (paper & live), wallet management, analytics, security, learning center, and subscription management.\n\n### Authentication\nAll protected routes require a **Bearer JWT** in the `Authorization` header:\n```\nAuthorization: Bearer <accessToken>\n```\nAccess tokens expire in **15 minutes**. Use `POST /api/v1/auth/refresh-token` with a refresh token (or cookie) to obtain new tokens.\n\n### CSRF Protection\nAll `/api/v1` state-changing requests require the CSRF token header `x-csrf-token`. Obtain it via `GET /api/v1/csrf-token` before performing POST/PUT/PATCH/DELETE.\n\n### Response Envelope\nAll responses are wrapped in a standard envelope:\n```json\n{ \"status\": \"success\" | \"error\", \"data\": {}, \"message\": \"...\" }\n```\n\n### Plans\n- **Basic** (free): limited features\n- **Pro** ($29/mo): real-time data, AI insights\n- **Enterprise** ($99/mo): DeFi, custom integrations, dedicated support",
+    "version": "1.0.0",
+    "contact": {
+      "name": "NeoFin Support"
+    },
+    "license": {
+      "name": "Private"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3003",
+      "description": "Local development server"
+    },
+    {
+      "url": "https://our-production-domain.com",
+      "description": "Production server"
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Server health check" },
+    { "name": "Auth", "description": "Authentication — register, login, logout, 2FA, password reset, email verification" },
+    { "name": "User", "description": "User profile, password, notification settings, API keys, sessions, devices, activity log" },
+    { "name": "Market", "description": "Live market prices, trending assets, asset details, watchlist, price alerts" },
+    { "name": "Portfolio", "description": "Portfolio summary, assets, history, performance, allocation, rebalancing, CSV import" },
+    { "name": "Trading", "description": "Live & paper trading orders, order book, recent trades, API key management" },
+    { "name": "Wallet", "description": "Connect, list and manage crypto wallets; deposits, withdrawals, gas prices" },
+    { "name": "Address Book", "description": "Saved recipient wallet addresses" },
+    { "name": "Transaction", "description": "Transaction history, stats, by asset/type" },
+    { "name": "DeFi", "description": "DeFi protocols, staking, liquidity pools, yield farms, gas prices, on-chain tx" },
+    { "name": "Analytics", "description": "Performance analytics, risk metrics, asset allocation, correlation, benchmark, tax report" },
+    { "name": "AI", "description": "AI-powered price predictions, sentiment analysis, risk assessment, portfolio optimization, market overview" },
+    { "name": "Notifications", "description": "In-app notification management" },
+    { "name": "Learning", "description": "Articles, videos, glossary, guides, stats, live news" },
+    { "name": "Security", "description": "Security status, device management, 2FA, activity log, permissions" },
+    { "name": "Payment", "description": "Subscription plans, Stripe checkout, billing history, portal, webhook" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT access token obtained from POST /api/v1/auth/login"
+      }
+    },
+    "schemas": {
+      "SuccessEnvelope": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["success"] },
+          "data": {}
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["error"] },
+          "message": { "type": "string" },
+          "code": { "type": "integer" }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer" },
+          "skip": { "type": "integer" },
+          "total": { "type": "integer" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "avatar": { "type": "string", "nullable": true },
+          "isEmailVerified": { "type": "boolean" },
+          "isTwoFactorEnabled": { "type": "boolean" },
+          "subscription": { "type": "string", "enum": ["basic", "pro", "enterprise"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AuthTokens": {
+        "type": "object",
+        "properties": {
+          "accessToken": { "type": "string" },
+          "refreshToken": { "type": "string" },
+          "user": { "$ref": "#/components/schemas/User" }
+        }
+      },
+      "Portfolio": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "totalValue": { "type": "number" },
+          "totalCost": { "type": "number" },
+          "profitLoss": { "type": "number" },
+          "profitLossPercentage": { "type": "number" },
+          "assets": { "type": "array", "items": { "$ref": "#/components/schemas/PortfolioAsset" } }
+        }
+      },
+      "PortfolioAsset": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "symbol": { "type": "string" },
+          "name": { "type": "string" },
+          "quantity": { "type": "number" },
+          "averageCost": { "type": "number" },
+          "currentPrice": { "type": "number" },
+          "currentValue": { "type": "number" },
+          "profitLoss": { "type": "number" },
+          "profitLossPercentage": { "type": "number" },
+          "allocation": { "type": "number" }
+        }
+      },
+      "MarketAsset": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string" },
+          "name": { "type": "string" },
+          "price": { "type": "number" },
+          "change24h": { "type": "number" },
+          "volume24h": { "type": "number", "nullable": true },
+          "marketCap": { "type": "number", "nullable": true }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "symbol": { "type": "string" },
+          "exchange": { "type": "string" },
+          "type": { "type": "string", "enum": ["market", "limit", "stop", "stop_limit"] },
+          "side": { "type": "string", "enum": ["buy", "sell"] },
+          "amount": { "type": "number" },
+          "price": { "type": "number", "nullable": true },
+          "status": { "type": "string", "enum": ["pending", "open", "filled", "cancelled", "rejected"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Wallet": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["exchange", "defi", "external"] },
+          "provider": { "type": "string" },
+          "address": { "type": "string" },
+          "network": { "type": "string" },
+          "balance": { "type": "number" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "type": { "type": "string", "enum": ["buy", "sell", "deposit", "withdrawal", "transfer"] },
+          "asset": { "type": "string" },
+          "amount": { "type": "number" },
+          "price": { "type": "number" },
+          "fee": { "type": "number" },
+          "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+          "txHash": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "message": { "type": "string" },
+          "isRead": { "type": "boolean" },
+          "data": { "type": "object", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DefiProtocol": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "apy": { "type": "number" },
+          "tvl": { "type": "number" },
+          "chain": { "type": "string" },
+          "logo": { "type": "string", "nullable": true }
+        }
+      },
+      "DefiPosition": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "protocol": { "type": "string" },
+          "asset": { "type": "string" },
+          "amount": { "type": "number" },
+          "value": { "type": "number" },
+          "apy": { "type": "number" },
+          "rewards": { "type": "number" },
+          "type": { "type": "string", "enum": ["staking", "liquidity", "yield"] }
+        }
+      },
+      "AddressBookEntry": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "label": { "type": "string" },
+          "address": { "type": "string" },
+          "network": { "type": "string" },
+          "notes": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Article": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "content": { "type": "string" },
+          "category": { "type": "string" },
+          "difficulty": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+          "readTime": { "type": "integer" },
+          "views": { "type": "integer" },
+          "author": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "exchange": { "type": "string" },
+          "label": { "type": "string" },
+          "apiKey": { "type": "string" },
+          "isActive": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SubscriptionPlan": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "enum": ["basic", "pro", "enterprise"] },
+          "name": { "type": "string" },
+          "price": { "type": "number" },
+          "period": { "type": "string" },
+          "description": { "type": "string" },
+          "features": { "type": "object" },
+          "limits": { "type": "object" }
+        }
+      },
+      "SecurityStatus": {
+        "type": "object",
+        "properties": {
+          "twoFactorEnabled": { "type": "boolean" },
+          "emailVerified": { "type": "boolean" },
+          "activeSessions": { "type": "integer" },
+          "lastLogin": { "type": "string", "format": "date-time", "nullable": true },
+          "failedAttempts": { "type": "integer" }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "browser": { "type": "string" },
+          "lastActive": { "type": "string", "format": "date-time" },
+          "isCurrent": { "type": "boolean" },
+          "trusted": { "type": "boolean" }
+        }
+      },
+      "ActivityLogEntry": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "userId": { "type": "string" },
+          "action": { "type": "string" },
+          "ipAddress": { "type": "string", "nullable": true },
+          "userAgent": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Unauthorized — missing or invalid JWT",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": { "status": "error", "message": "Unauthorized", "code": 401 }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Forbidden — insufficient permissions or plan",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Validation error — invalid request body/params",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": { "status": "error", "message": "email: Invalid email address", "code": 422 }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "limitParam": {
+        "name": "limit",
+        "in": "query",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
+        "description": "Number of records to return"
+      },
+      "skipParam": {
+        "name": "skip",
+        "in": "query",
+        "schema": { "type": "integer", "minimum": 0, "default": 0 },
+        "description": "Number of records to skip (offset)"
+      }
+    }
+  },
+  "security": [],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Server health check",
+        "description": "Returns server status, WebSocket connection count, and AI configuration.",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "ok",
+                  "message": "Server is running",
+                  "websocket": { "connections": 4 },
+                  "ai": { "enabled": true, "model": "gemini-pro", "provider": "Google Gemini", "maxTokens": 300 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csrf-token": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Get CSRF token",
+        "description": "Returns a CSRF token that must be included as the `x-csrf-token` header in all subsequent state-changing requests.",
+        "operationId": "getCsrfToken",
+        "responses": {
+          "200": {
+            "description": "CSRF token",
+            "content": {
+              "application/json": {
+                "example": { "csrfToken": "abc123..." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register new user",
+        "operationId": "register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password", "firstName", "lastName"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8, "description": "Must contain uppercase, lowercase, number, special char" },
+                  "firstName": { "type": "string", "minLength": 2 },
+                  "lastName": { "type": "string", "minLength": 2 }
+                }
+              },
+              "example": { "email": "alice@example.com", "password": "StrongP@ss1", "firstName": "Alice", "lastName": "Smith" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registration successful — verification email sent",
+            "content": {
+              "application/json": {
+                "example": { "status": "success", "message": "Registration successful. Please check your email to verify your account.", "data": { "userId": "64a..." } }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" },
+                  "twoFactorCode": { "type": "string", "description": "6-digit TOTP code (required if 2FA is enabled)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "headers": {
+              "Set-Cookie": { "schema": { "type": "string" }, "description": "HTTP-only refreshToken cookie set" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/AuthTokens" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/refresh-token": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Refresh access token",
+        "operationId": "refreshToken",
+        "description": "Provide the refresh token in the body **or** via the `refreshToken` HTTP-only cookie.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refreshToken": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New access and refresh tokens",
+            "content": {
+              "application/json": {
+                "example": { "status": "success", "data": { "accessToken": "ey...", "refreshToken": "ey..." } }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Logout",
+        "operationId": "logout",
+        "description": "Invalidates the refresh token. Auth is NOT required (token may already be expired).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refreshToken": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Logged out successfully" }
+        }
+      }
+    },
+    "/api/v1/auth/forgot-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Request password reset email",
+        "operationId": "forgotPassword",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": { "email": { "type": "string", "format": "email" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password reset email sent if account exists" }
+        }
+      }
+    },
+    "/api/v1/auth/reset-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Reset password with token",
+        "operationId": "resetPassword",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "newPassword"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "newPassword": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password reset successful" },
+          "400": { "description": "Invalid or expired token" }
+        }
+      }
+    },
+    "/api/v1/auth/verify-email/{token}": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Verify email address",
+        "operationId": "verifyEmail",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Email verified" },
+          "400": { "description": "Invalid or expired token" }
+        }
+      }
+    },
+    "/api/v1/auth/2fa/setup": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Set up 2FA (TOTP)",
+        "operationId": "setup2FA",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Returns a TOTP secret and QR code URL to scan with an authenticator app.",
+        "responses": {
+          "200": {
+            "description": "2FA setup data",
+            "content": {
+              "application/json": {
+                "example": { "status": "success", "data": { "secret": "BASE32SECRET", "qrCode": "data:image/png;base64,..." } }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/2fa/verify": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Verify and enable 2FA",
+        "operationId": "verify2FA",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": { "token": { "type": "string", "minLength": 6, "maxLength": 6 } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "2FA verified and enabled" },
+          "400": { "description": "Invalid TOTP code" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/2fa/disable": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Disable 2FA",
+        "operationId": "disable2FA",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "2FA disabled" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/profile": {
+      "get": {
+        "tags": ["User"],
+        "summary": "Get user profile",
+        "operationId": "getProfile",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/User" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "put": {
+        "tags": ["User"],
+        "summary": "Update user profile",
+        "operationId": "updateProfile",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "firstName": { "type": "string" },
+                  "lastName": { "type": "string" },
+                  "bio": { "type": "string" },
+                  "timezone": { "type": "string" },
+                  "currency": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Profile updated" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/avatar": {
+      "post": {
+        "tags": ["User"],
+        "summary": "Upload avatar image",
+        "operationId": "uploadAvatar",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "avatar": { "type": "string", "format": "binary", "description": "JPEG/PNG/WebP, max 5 MB" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Avatar uploaded", "content": { "application/json": { "example": { "status": "success", "data": { "avatar": "/uploads/avatars/user123.jpg" } } } } },
+          "400": { "description": "No file uploaded or invalid file type" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/password": {
+      "put": {
+        "tags": ["User"],
+        "summary": "Change password",
+        "operationId": "changePassword",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string" },
+                  "newPassword": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password changed" },
+          "400": { "description": "Current password incorrect" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/notifications": {
+      "get": {
+        "tags": ["User"],
+        "summary": "Get notification settings",
+        "operationId": "getNotificationSettings",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Notification settings object" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "put": {
+        "tags": ["User"],
+        "summary": "Update notification settings",
+        "operationId": "updateNotificationSettings",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "emailAlerts": { "type": "boolean" },
+                  "pushAlerts": { "type": "boolean" },
+                  "priceAlerts": { "type": "boolean" },
+                  "tradeAlerts": { "type": "boolean" },
+                  "securityAlerts": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Settings updated" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/api-keys": {
+      "get": {
+        "tags": ["User"],
+        "summary": "List saved exchange API keys",
+        "operationId": "getUserApiKeys",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Array of API keys (secrets redacted)" }
+        }
+      },
+      "post": {
+        "tags": ["User"],
+        "summary": "Save exchange API key",
+        "operationId": "saveApiKey",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["exchange", "apiKey", "apiSecret"],
+                "properties": {
+                  "exchange": { "type": "string" },
+                  "apiKey": { "type": "string" },
+                  "apiSecret": { "type": "string" },
+                  "passphrase": { "type": "string" },
+                  "label": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "API key saved" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/api-keys/{id}": {
+      "delete": {
+        "tags": ["User"],
+        "summary": "Delete API key",
+        "operationId": "deleteApiKeyUser",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Key deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/user/security-status": {
+      "get": {
+        "tags": ["User"],
+        "summary": "Get security status summary",
+        "operationId": "getUserSecurityStatus",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Security status" }
+        }
+      }
+    },
+    "/api/v1/user/sessions": {
+      "get": {
+        "tags": ["User"],
+        "summary": "List active sessions",
+        "operationId": "getSessions",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Sessions list" } }
+      }
+    },
+    "/api/v1/user/sessions/{id}": {
+      "delete": {
+        "tags": ["User"],
+        "summary": "Revoke session",
+        "operationId": "removeSession",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Session revoked" } }
+      }
+    },
+    "/api/v1/user/devices": {
+      "get": {
+        "tags": ["User"],
+        "summary": "List trusted devices",
+        "operationId": "getDevicesUser",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Devices list" } }
+      }
+    },
+    "/api/v1/user/devices/{id}": {
+      "delete": {
+        "tags": ["User"],
+        "summary": "Revoke device",
+        "operationId": "revokeDevice",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Device revoked" } }
+      }
+    },
+    "/api/v1/user/activity": {
+      "get": {
+        "tags": ["User"],
+        "summary": "Get activity log",
+        "operationId": "getUserActivity",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Activity log entries" } }
+      }
+    },
+    "/api/v1/user/account": {
+      "delete": {
+        "tags": ["User"],
+        "summary": "Delete account",
+        "operationId": "deleteAccount",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Account deleted" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/market/prices": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get current prices for symbols",
+        "operationId": "getPrices",
+        "parameters": [
+          { "name": "symbols", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated symbols e.g. BTC,ETH,SOL" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Price map",
+            "content": {
+              "application/json": {
+                "example": { "status": "success", "data": { "BTC": { "price": 67000, "change24h": 2.3 } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/assets": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get all market assets with prices",
+        "operationId": "getMarketAssets",
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["1h", "24h", "7d", "30d"], "default": "24h" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of market assets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": { "type": "string" },
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/MarketAsset" } }
+                  }
+                }
+              }
+            }
+          },
+          "503": { "description": "Market data temporarily unavailable" }
+        }
+      }
+    },
+    "/api/v1/market/trending": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get trending assets",
+        "operationId": "getTrendingAssets",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": { "200": { "description": "Trending assets" } }
+      }
+    },
+    "/api/v1/market/search": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Search assets",
+        "operationId": "searchAssets",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Search query" }
+        ],
+        "responses": { "200": { "description": "Matching assets" } }
+      }
+    },
+    "/api/v1/market/details/{symbol}": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get asset details",
+        "operationId": "getAssetDetails",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" }, "example": "BTC" }
+        ],
+        "responses": {
+          "200": { "description": "Asset detail with market cap, volume, OHLCV data" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/market/summary": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get overall market summary",
+        "operationId": "getMarketSummary",
+        "responses": { "200": { "description": "Market summary stats (total market cap, volume, BTC dominance)" } }
+      }
+    },
+    "/api/v1/market/available-assets": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get available assets for trading",
+        "operationId": "getAvailableAssets",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Available trading assets" } }
+      }
+    },
+    "/api/v1/market/watchlist": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get user watchlist",
+        "operationId": "getWatchlist",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Watchlist with live prices" } }
+      }
+    },
+    "/api/v1/market/watchlist/{symbol}": {
+      "post": {
+        "tags": ["Market"],
+        "summary": "Add symbol to watchlist",
+        "operationId": "addToWatchlist",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Added to watchlist" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "delete": {
+        "tags": ["Market"],
+        "summary": "Remove symbol from watchlist",
+        "operationId": "removeFromWatchlist",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Removed from watchlist" } }
+      }
+    },
+    "/api/v1/market/alerts": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Get price alerts",
+        "operationId": "getPriceAlerts",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "List of price alerts" } }
+      },
+      "post": {
+        "tags": ["Market"],
+        "summary": "Create price alert",
+        "operationId": "createPriceAlert",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["symbol", "targetPrice", "condition"],
+                "properties": {
+                  "symbol": { "type": "string" },
+                  "targetPrice": { "type": "number" },
+                  "condition": { "type": "string", "enum": ["above", "below"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Alert created" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/market/alerts/{id}": {
+      "delete": {
+        "tags": ["Market"],
+        "summary": "Delete price alert",
+        "operationId": "deletePriceAlert",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Alert deleted" } }
+      }
+    },
+    "/api/v1/portfolio": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get portfolio summary",
+        "operationId": "getPortfolioSummary",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Portfolio summary with total value, P&L, and asset list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": { "type": "string" },
+                    "data": { "$ref": "#/components/schemas/Portfolio" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/portfolio/assets": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get all portfolio assets",
+        "operationId": "getAllPortfolioAssets",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Paginated asset list" } }
+      },
+      "post": {
+        "tags": ["Portfolio"],
+        "summary": "Add asset to portfolio",
+        "operationId": "addPortfolioAsset",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["symbol", "quantity", "averageCost"],
+                "properties": {
+                  "symbol": { "type": "string" },
+                  "quantity": { "type": "number", "minimum": 0 },
+                  "averageCost": { "type": "number", "minimum": 0 },
+                  "type": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Asset added" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/portfolio/assets/{id}": {
+      "put": {
+        "tags": ["Portfolio"],
+        "summary": "Update portfolio asset",
+        "operationId": "updatePortfolioAsset",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "quantity": { "type": "number" }, "averageCost": { "type": "number" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Asset updated" } }
+      },
+      "delete": {
+        "tags": ["Portfolio"],
+        "summary": "Remove portfolio asset",
+        "operationId": "deletePortfolioAsset",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Asset removed" } }
+      }
+    },
+    "/api/v1/portfolio/assets/{symbol}/history": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get asset price history",
+        "operationId": "getAssetPriceHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["1d", "7d", "30d", "90d", "1y"] } }
+        ],
+        "responses": { "200": { "description": "Price history data points" } }
+      }
+    },
+    "/api/v1/portfolio/history": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get portfolio value history",
+        "operationId": "getPortfolioHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["7d", "30d", "90d", "1y", "all"] } }
+        ],
+        "responses": { "200": { "description": "Portfolio value snapshots over time" } }
+      }
+    },
+    "/api/v1/portfolio/performance": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get performance metrics",
+        "operationId": "getPerformanceMetrics",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "ROI, Sharpe ratio, max drawdown, alpha, beta" } }
+      }
+    },
+    "/api/v1/portfolio/allocation": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get asset allocation breakdown",
+        "operationId": "getPortfolioAllocation",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Asset allocation by symbol and type" } }
+      }
+    },
+    "/api/v1/portfolio/rebalance": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get rebalance suggestions",
+        "operationId": "getRebalanceSuggestions",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Rebalance suggestions list" } }
+      }
+    },
+    "/api/v1/portfolio/{portfolioId}/rebalance": {
+      "post": {
+        "tags": ["Portfolio"],
+        "summary": "AI-powered portfolio rebalance",
+        "operationId": "rebalancePortfolio",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "portfolioId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "objective": { "type": "string", "enum": ["sharpe", "min_risk", "max_return"], "default": "sharpe" },
+                  "dryRun": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Rebalance result with trade recommendations" } }
+      }
+    },
+    "/api/v1/portfolio/export": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Export portfolio data",
+        "operationId": "getPortfolioExport",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Full portfolio export data" } }
+      }
+    },
+    "/api/v1/portfolio/transactions": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Get portfolio transactions",
+        "operationId": "getPortfolioTransactions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Paginated transaction list" } }
+      }
+    },
+    "/api/v1/portfolio/transactions/import": {
+      "post": {
+        "tags": ["Portfolio"],
+        "summary": "Import transactions from CSV",
+        "operationId": "importTransactionsCSV",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary", "description": "CSV file, max 5 MB" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Transactions imported" },
+          "400": { "description": "Invalid CSV format" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/trading/orders": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Place live trading order",
+        "operationId": "placeOrder",
+        "security": [{ "bearerAuth": [] }],
+        "description": "**Requires Pro or Enterprise plan.** Places an order on a connected exchange.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["symbol", "type", "side", "amount"],
+                "properties": {
+                  "symbol": { "type": "string", "example": "BTCUSDT" },
+                  "exchange": { "type": "string", "default": "binance" },
+                  "type": { "type": "string", "enum": ["market", "limit", "stop", "stop_limit"] },
+                  "side": { "type": "string", "enum": ["buy", "sell"] },
+                  "amount": { "type": "number", "minimum": 0 },
+                  "price": { "type": "number", "description": "Required for limit/stop_limit" },
+                  "stopPrice": { "type": "number" },
+                  "timeInForce": { "type": "string", "enum": ["GTC", "IOC", "FOK"], "default": "GTC" },
+                  "stopLoss": { "type": "object", "properties": { "price": { "type": "number" }, "triggerType": { "type": "string" } } },
+                  "takeProfit": { "type": "object", "properties": { "price": { "type": "number" }, "triggerType": { "type": "string" } } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order placed",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "status": { "type": "string" }, "data": { "$ref": "#/components/schemas/Order" } } }
+              }
+            }
+          },
+          "402": { "description": "Plan upgrade required" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get open orders",
+        "operationId": "getOpenOrders",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "List of open orders" } }
+      }
+    },
+    "/api/v1/trading/orders/history": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get order history",
+        "operationId": "getOrderHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Paginated order history" } }
+      }
+    },
+    "/api/v1/trading/orders/{id}": {
+      "delete": {
+        "tags": ["Trading"],
+        "summary": "Cancel order",
+        "operationId": "cancelOrder",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Order cancelled" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/trading/orderbook": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get order book for symbol",
+        "operationId": "getOrderBook",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "example": "BTCUSDT" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 5, "maximum": 100, "default": 20 } }
+        ],
+        "responses": { "200": { "description": "Order book bids and asks" } }
+      }
+    },
+    "/api/v1/trading/trades": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get recent trades for symbol",
+        "operationId": "getRecentTrades",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": { "200": { "description": "Recent executed trades" } }
+      }
+    },
+    "/api/v1/trading/paper/init": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Initialize paper trading account",
+        "operationId": "initializePaperAccount",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Creates a virtual $100,000 paper trading portfolio.",
+        "responses": { "201": { "description": "Paper account initialized" } }
+      }
+    },
+    "/api/v1/trading/paper/trades": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Place paper trade",
+        "operationId": "placePaperTrade",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["symbol", "side", "amount"],
+                "properties": {
+                  "symbol": { "type": "string" },
+                  "side": { "type": "string", "enum": ["buy", "sell"] },
+                  "amount": { "type": "number", "minimum": 0 },
+                  "price": { "type": "number" },
+                  "type": { "type": "string", "enum": ["market", "limit"], "default": "market" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Paper trade executed" } }
+      }
+    },
+    "/api/v1/trading/paper/portfolio": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get paper trading portfolio",
+        "operationId": "getPaperPortfolio",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Paper portfolio with holdings and P&L" } }
+      }
+    },
+    "/api/v1/trading/paper/history": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "Get paper trade history",
+        "operationId": "getPaperTradeHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Paginated paper trade history" } }
+      }
+    },
+    "/api/v1/trading/paper/reset": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Reset paper trading account",
+        "operationId": "resetPaperAccount",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Account reset to $100,000" } }
+      }
+    },
+    "/api/v1/trading/paper/close": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Close paper trading account",
+        "operationId": "closePaperAccount",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Account closed" } }
+      }
+    },
+    "/api/v1/trading/api-keys": {
+      "get": {
+        "tags": ["Trading"],
+        "summary": "List exchange API keys",
+        "operationId": "listTradingApiKeys",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "API keys (secrets redacted)" } }
+      },
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Add exchange API key",
+        "operationId": "addTradingApiKey",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["exchange", "apiKey", "apiSecret"],
+                "properties": {
+                  "exchange": { "type": "string" },
+                  "apiKey": { "type": "string" },
+                  "apiSecret": { "type": "string" },
+                  "passphrase": { "type": "string" },
+                  "label": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "API key added" } }
+      }
+    },
+    "/api/v1/trading/api-keys/{id}": {
+      "delete": {
+        "tags": ["Trading"],
+        "summary": "Delete exchange API key",
+        "operationId": "deleteTradingApiKey",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Key deleted" } }
+      }
+    },
+    "/api/v1/trading/api-keys/{id}/test": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Test exchange API key",
+        "operationId": "testTradingApiKey",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "API key is valid" },
+          "400": { "description": "Key test failed" }
+        }
+      }
+    },
+    "/api/v1/wallet": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get all wallets",
+        "operationId": "getWallets",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "List of connected wallets",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Wallet" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/connect": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Connect a wallet",
+        "operationId": "connectWallet",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "type", "provider", "address", "network"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "type": "string", "enum": ["exchange", "defi", "external"] },
+                  "provider": { "type": "string" },
+                  "address": { "type": "string" },
+                  "network": { "type": "string" },
+                  "signature": { "type": "string", "description": "Required when type is 'external' for ownership verification" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Wallet connected" },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/v1/wallet/{id}": {
+      "delete": {
+        "tags": ["Wallet"],
+        "summary": "Remove wallet",
+        "operationId": "removeWallet",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Wallet removed" } }
+      }
+    },
+    "/api/v1/wallet/transactions": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get wallet transactions",
+        "operationId": "getWalletTransactions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "walletId", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["all", "deposit", "withdrawal", "transfer"] } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Wallet transactions" } }
+      }
+    },
+    "/api/v1/wallet/deposit": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Get deposit address",
+        "operationId": "getDepositAddress",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletId", "asset", "network"],
+                "properties": {
+                  "walletId": { "type": "string" },
+                  "asset": { "type": "string" },
+                  "network": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Deposit address and QR code", "content": { "application/json": { "example": { "status": "success", "data": { "address": "0x...", "qrCode": "data:image/png..." } } } } },
+          "422": { "description": "Could not generate deposit address" }
+        }
+      }
+    },
+    "/api/v1/wallet/withdraw": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Withdraw funds",
+        "operationId": "withdrawFunds",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletId", "asset", "amount", "destinationAddress", "network"],
+                "properties": {
+                  "walletId": { "type": "string" },
+                  "asset": { "type": "string" },
+                  "amount": { "type": "number", "minimum": 0 },
+                  "destinationAddress": { "type": "string" },
+                  "network": { "type": "string" },
+                  "memo": { "type": "string" },
+                  "twoFactorCode": { "type": "string" },
+                  "signedTx": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Withdrawal initiated" } }
+      }
+    },
+    "/api/v1/wallet/gas-prices": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get current gas prices",
+        "operationId": "getWalletGasPrices",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Gas prices (slow, standard, fast, instant) in Gwei" } }
+      }
+    },
+    "/api/v1/wallet/cache-transactions": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Cache wallet transactions (from MetaMask/Web3)",
+        "operationId": "cacheTransactions",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletId", "transactions"],
+                "properties": {
+                  "walletId": { "type": "string" },
+                  "transactions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "hash": { "type": "string" },
+                        "type": { "type": "string", "enum": ["send", "receive", "transfer", "swap", "approve"] },
+                        "asset": { "type": "string" },
+                        "value": { "type": "string" },
+                        "from": { "type": "string" },
+                        "to": { "type": "string" },
+                        "network": { "type": "string" },
+                        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+                        "timestamp": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Transactions cached" } }
+      }
+    },
+    "/api/v1/wallet/transactions/status": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get on-chain transaction status",
+        "operationId": "getTransactionStatus",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "txHash", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "network", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Transaction status" } }
+      }
+    },
+    "/api/v1/addressbook": {
+      "get": {
+        "tags": ["Address Book"],
+        "summary": "Get address book",
+        "operationId": "getAddressBook",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Address book entries",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AddressBookEntry" } } } }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Address Book"],
+        "summary": "Add address",
+        "operationId": "addAddress",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["label", "address", "network"],
+                "properties": {
+                  "label": { "type": "string" },
+                  "address": { "type": "string" },
+                  "network": { "type": "string" },
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Address added" } }
+      }
+    },
+    "/api/v1/addressbook/{id}": {
+      "patch": {
+        "tags": ["Address Book"],
+        "summary": "Update address",
+        "operationId": "updateAddress",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "label": { "type": "string" }, "notes": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Address updated" } }
+      },
+      "delete": {
+        "tags": ["Address Book"],
+        "summary": "Delete address",
+        "operationId": "deleteAddress",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Address deleted" } }
+      }
+    },
+    "/api/v1/transaction/recent": {
+      "get": {
+        "tags": ["Transaction"],
+        "summary": "Get recent transactions",
+        "operationId": "getRecentTransactions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent transactions",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Transaction" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/transaction/stats": {
+      "get": {
+        "tags": ["Transaction"],
+        "summary": "Get transaction statistics",
+        "operationId": "getTransactionStats",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Stats: total count, volume, fees, by type" } }
+      }
+    },
+    "/api/v1/transaction/asset/{asset}": {
+      "get": {
+        "tags": ["Transaction"],
+        "summary": "Get transactions by asset",
+        "operationId": "getTransactionsByAsset",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "asset", "in": "path", "required": true, "schema": { "type": "string" }, "example": "BTC" },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Transactions for the asset" } }
+      }
+    },
+    "/api/v1/transaction/type/{type}": {
+      "get": {
+        "tags": ["Transaction"],
+        "summary": "Get transactions by type",
+        "operationId": "getTransactionsByType",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string", "enum": ["buy", "sell", "deposit", "withdrawal", "transfer"] } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Transactions of the type" } }
+      }
+    },
+    "/api/v1/transaction/{id}": {
+      "get": {
+        "tags": ["Transaction"],
+        "summary": "Get transaction by ID",
+        "operationId": "getTransactionById",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Transaction detail" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/transaction": {
+      "post": {
+        "tags": ["Transaction"],
+        "summary": "Create transaction",
+        "operationId": "createTransaction",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["type", "asset", "amount"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["buy", "sell", "deposit", "withdrawal", "transfer"] },
+                  "asset": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "price": { "type": "number" },
+                  "fee": { "type": "number" },
+                  "txHash": { "type": "string" },
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Transaction created" } }
+      }
+    },
+    "/api/v1/defi/protocols": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get DeFi protocols",
+        "operationId": "getProtocols",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "DeFi protocols list",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/DefiProtocol" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/defi/protocols/{id}": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get protocol details",
+        "operationId": "getProtocolDetails",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Protocol detail including TVL history and positions" } }
+      }
+    },
+    "/api/v1/defi/positions": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get user DeFi positions",
+        "operationId": "getDefiPositions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "User DeFi positions" } }
+      }
+    },
+    "/api/v1/defi/staking-positions": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get staking positions",
+        "operationId": "getStakingPositions",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Staking positions with APY and rewards" } }
+      }
+    },
+    "/api/v1/defi/stake": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Stake assets",
+        "operationId": "stakeAssets",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Returns an **unsigned transaction** to be signed by MetaMask.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["protocolId", "assetSymbol", "amount", "walletAddress"],
+                "properties": {
+                  "protocolId": { "type": "string" },
+                  "assetSymbol": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "walletAddress": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Unsigned staking transaction" } }
+      }
+    },
+    "/api/v1/defi/unstake": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Unstake assets",
+        "operationId": "unstakeAssets",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["positionId"],
+                "properties": {
+                  "positionId": { "type": "string" },
+                  "amount": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Unstake result" } }
+      }
+    },
+    "/api/v1/defi/claim-staking-rewards": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Claim staking rewards",
+        "operationId": "claimStakingRewards",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "positionId": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Rewards claimed" } }
+      }
+    },
+    "/api/v1/defi/pools": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get liquidity pools",
+        "operationId": "getLiquidityPools",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Liquidity pools with TVL and APY" } }
+      }
+    },
+    "/api/v1/defi/pools/join": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Join liquidity pool",
+        "operationId": "joinLiquidityPool",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["poolId", "amount", "walletAddress"],
+                "properties": {
+                  "poolId": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "walletAddress": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Joined pool" } }
+      }
+    },
+    "/api/v1/defi/pools/exit": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Exit liquidity pool",
+        "operationId": "exitLiquidityPool",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "positionId": { "type": "string" }, "percentage": { "type": "number", "minimum": 1, "maximum": 100 } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Exited pool" } }
+      }
+    },
+    "/api/v1/defi/pools/{poolId}/tvl-history": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get pool TVL history",
+        "operationId": "getPoolTvlHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "poolId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "TVL history data points" } }
+      }
+    },
+    "/api/v1/defi/yield-farms": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get yield farms",
+        "operationId": "getYieldFarms",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Yield farm list with APY" } }
+      }
+    },
+    "/api/v1/defi/farms/deposit": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Deposit to yield farm",
+        "operationId": "depositToFarm",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "farmId": { "type": "string" }, "amount": { "type": "number" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Deposited" } }
+      }
+    },
+    "/api/v1/defi/farms/withdraw": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Withdraw from yield farm",
+        "operationId": "withdrawFromFarm",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "positionId": { "type": "string" }, "amount": { "type": "number" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Withdrawn" } }
+      }
+    },
+    "/api/v1/defi/farms/harvest": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Harvest farm rewards",
+        "operationId": "harvestFarmRewards",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "positionId": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Rewards harvested" } }
+      }
+    },
+    "/api/v1/defi/gas-prices": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get current gas prices",
+        "operationId": "getDefiGasPrices",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Gas prices from Ethereum network" } }
+      }
+    },
+    "/api/v1/defi/stats": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get DeFi stats / portfolio summary",
+        "operationId": "getDefiStats",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Total DeFi value, rewards, positions count" } }
+      }
+    },
+    "/api/v1/defi/build-tx": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Build unsigned on-chain transaction",
+        "operationId": "buildTransaction",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Builds an unsigned transaction payload for MetaMask to sign.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action", "protocolId", "assetSymbol", "amount", "walletAddress"],
+                "properties": {
+                  "action": { "type": "string", "enum": ["stake", "unstake", "deposit", "withdraw", "claim"] },
+                  "protocolId": { "type": "string" },
+                  "assetSymbol": { "type": "string" },
+                  "amount": { "type": "string" },
+                  "walletAddress": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Unsigned transaction data" } }
+      }
+    },
+    "/api/v1/defi/confirm-tx": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Confirm on-chain transaction",
+        "operationId": "confirmTransaction",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Called after MetaMask signs and broadcasts the transaction. Verifies on-chain and saves the position.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["txHash", "action"],
+                "properties": {
+                  "txHash": { "type": "string" },
+                  "action": { "type": "string" },
+                  "protocolId": { "type": "string" },
+                  "assetSymbol": { "type": "string" },
+                  "amount": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Transaction confirmed and position saved" } }
+      }
+    },
+    "/api/v1/defi/chart-history/{positionId}": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Get chart history for a position",
+        "operationId": "getChartHistory",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "positionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Value/APY history data points" } }
+      }
+    },
+    "/api/v1/analytics/performance": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get performance analytics",
+        "operationId": "getPerformanceAnalytics",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["1w", "1m", "3m", "6m", "1y", "all"], "default": "1m" } },
+          { "name": "metrics", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated metrics e.g. returns,sharpe,drawdown" }
+        ],
+        "responses": { "200": { "description": "Performance metrics including ROI, Sharpe, drawdown, alpha, beta" } }
+      }
+    },
+    "/api/v1/analytics/risk": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get risk metrics",
+        "operationId": "getRiskMetrics",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "default": "3m" } }
+        ],
+        "responses": { "200": { "description": "Risk metrics: VaR, volatility, beta, Sharpe, Sortino" } }
+      }
+    },
+    "/api/v1/analytics/allocation": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get asset allocation analytics",
+        "operationId": "getAnalyticsAllocation",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Asset allocation breakdown" } }
+      }
+    },
+    "/api/v1/analytics/correlation": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get asset correlation matrix",
+        "operationId": "getCorrelationMatrix",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Correlation matrix for portfolio assets" } }
+      }
+    },
+    "/api/v1/analytics/benchmark": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get benchmark comparison",
+        "operationId": "getBenchmarkComparison",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "default": "1m" } },
+          { "name": "benchmark", "in": "query", "schema": { "type": "string", "default": "BTC" } }
+        ],
+        "responses": { "200": { "description": "Portfolio vs benchmark performance" } }
+      }
+    },
+    "/api/v1/analytics/tax": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get tax report",
+        "operationId": "getTaxReport",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "year", "in": "query", "schema": { "type": "integer" }, "description": "Tax year (defaults to current year)" }
+        ],
+        "responses": { "200": { "description": "Tax report with realized gains/losses" } }
+      }
+    },
+    "/api/v1/analytics/predictions": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get AI price predictions (via analytics)",
+        "operationId": "getAnalyticsPredictions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Price predictions" } }
+      }
+    },
+    "/api/v1/analytics/sentiment": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get market sentiment (via analytics)",
+        "operationId": "getAnalyticsSentiment",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Sentiment score and breakdown" } }
+      }
+    },
+    "/api/v1/analytics/opportunities": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get investment opportunities (via analytics)",
+        "operationId": "getAnalyticsOpportunities",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Investment opportunity signals" } }
+      }
+    },
+    "/api/v1/analytics/report": {
+      "post": {
+        "tags": ["Analytics"],
+        "summary": "Generate custom analytics report",
+        "operationId": "generateCustomReport",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metrics": { "type": "array", "items": { "type": "string" } },
+                  "timeframe": { "type": "string" },
+                  "format": { "type": "string", "enum": ["json", "csv", "pdf"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Custom report data" } }
+      }
+    },
+    "/api/v1/ai/predictions/{symbol}": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get AI price predictions",
+        "operationId": "getPricePredictions",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" }, "example": "BTC" },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["1h", "4h", "1d", "1w"] } },
+          { "name": "horizon", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "AI price predictions with confidence intervals" } }
+      }
+    },
+    "/api/v1/ai/sentiment/{symbol}": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get market sentiment analysis",
+        "operationId": "getMarketSentiment",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "sources", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated: news,social,technical" },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Sentiment score (-1 bearish to +1 bullish), breakdown by source" } }
+      }
+    },
+    "/api/v1/ai/risk/assessment": {
+      "post": {
+        "tags": ["AI"],
+        "summary": "AI risk assessment",
+        "operationId": "getRiskAssessment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["assets"],
+                "properties": {
+                  "assets": { "type": "array", "items": { "type": "object", "properties": { "symbol": { "type": "string" }, "weight": { "type": "number" } } } },
+                  "timeframe": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Risk assessment: VaR, volatility, concentration risk" } }
+      }
+    },
+    "/api/v1/ai/opportunities": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get investment opportunities",
+        "operationId": "getInvestmentOpportunities",
+        "parameters": [
+          { "name": "riskLevel", "in": "query", "schema": { "type": "string", "enum": ["low", "medium", "high"] } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": { "200": { "description": "AI-ranked investment opportunities" } }
+      }
+    },
+    "/api/v1/ai/portfolio/optimize": {
+      "post": {
+        "tags": ["AI"],
+        "summary": "AI portfolio optimization",
+        "operationId": "optimizePortfolio",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assets": { "type": "array", "items": { "type": "object" } },
+                  "constraints": { "type": "object", "properties": { "maxWeight": { "type": "number" }, "minWeight": { "type": "number" } } },
+                  "objective": { "type": "string", "enum": ["sharpe", "min_risk", "max_return"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Optimized portfolio weights" } }
+      }
+    },
+    "/api/v1/ai/strategy/recommend": {
+      "post": {
+        "tags": ["AI"],
+        "summary": "Get strategy recommendations",
+        "operationId": "getStrategyRecommendations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "portfolio": { "type": "object" },
+                  "preferences": { "type": "object", "properties": { "riskTolerance": { "type": "string" }, "investmentHorizon": { "type": "string" } } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Strategy recommendations with rationale" } }
+      }
+    },
+    "/api/v1/ai/patterns/{symbol}": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Detect chart patterns",
+        "operationId": "detectPatterns",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string" } },
+          { "name": "patterns", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated: headAndShoulders,doubleTop,triangle,etc" }
+        ],
+        "responses": { "200": { "description": "Detected chart patterns with confidence scores" } }
+      }
+    },
+    "/api/v1/ai/news/analysis": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Analyze financial news",
+        "operationId": "analyzeNews",
+        "parameters": [
+          { "name": "symbols", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": { "200": { "description": "News articles with sentiment scores" } }
+      }
+    },
+    "/api/v1/ai/anomalies": {
+      "post": {
+        "tags": ["AI"],
+        "summary": "Detect market anomalies",
+        "operationId": "detectAnomalies",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "symbol": { "type": "string" },
+                  "data": { "type": "array", "items": { "type": "object" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Detected anomalies with severity" } }
+      }
+    },
+    "/api/v1/ai/insights": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get personalized AI insights",
+        "operationId": "getPersonalizedInsights",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Personalized insights based on portfolio and activity" } }
+      }
+    },
+    "/api/v1/ai/fear-greed": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get Fear & Greed Index",
+        "operationId": "getFearGreedIndex",
+        "description": "Public endpoint — no auth required.",
+        "responses": { "200": { "description": "Current fear & greed index value and classification" } }
+      }
+    },
+    "/api/v1/ai/market/dominance": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get BTC market dominance",
+        "operationId": "getBTCDominance",
+        "description": "Public endpoint — no auth required.",
+        "responses": { "200": { "description": "BTC dominance percentage and history" } }
+      }
+    },
+    "/api/v1/ai/trending-coins": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get trending coins",
+        "operationId": "getTrendingCoins",
+        "description": "Public endpoint — no auth required.",
+        "responses": { "200": { "description": "Top trending coins by search volume" } }
+      }
+    },
+    "/api/v1/ai/market/overview": {
+      "get": {
+        "tags": ["AI"],
+        "summary": "Get bundled market overview",
+        "operationId": "getMarketOverview",
+        "description": "Returns fear/greed + BTC dominance + trending coins + top prices in a single call. Public endpoint.",
+        "responses": { "200": { "description": "Complete market overview bundle" } }
+      }
+    },
+    "/api/v1/user/notifications": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "Get notifications",
+        "operationId": "getNotifications",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "skip", "in": "query", "schema": { "type": "integer", "default": 0 } },
+          { "name": "unreadOnly", "in": "query", "schema": { "type": "boolean", "default": false } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifications with pagination and unread count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Notification" } },
+                    "pagination": { "$ref": "#/components/schemas/Pagination" },
+                    "unreadCount": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/user/notifications/unread/count": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "Get unread notification count",
+        "operationId": "getUnreadNotificationCount",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Unread count", "content": { "application/json": { "example": { "status": "success", "data": { "count": 5 } } } } } }
+      }
+    },
+    "/api/v1/user/notifications/{id}": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "Get single notification",
+        "operationId": "getNotification",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Notification detail" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["Notifications"],
+        "summary": "Delete notification",
+        "operationId": "deleteNotification",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Notification deleted" } }
+      }
+    },
+    "/api/v1/user/notifications/{id}/read": {
+      "patch": {
+        "tags": ["Notifications"],
+        "summary": "Mark notification as read",
+        "operationId": "markNotificationAsRead",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Marked as read" } }
+      }
+    },
+    "/api/v1/user/notifications/mark-all/read": {
+      "patch": {
+        "tags": ["Notifications"],
+        "summary": "Mark all notifications as read",
+        "operationId": "markAllNotificationsAsRead",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "All marked as read", "content": { "application/json": { "example": { "status": "success", "message": "All notifications marked as read", "modifiedCount": 12 } } } } }
+      }
+    },
+    "/api/v1/user/notifications": {
+      "delete": {
+        "tags": ["Notifications"],
+        "summary": "Delete all notifications",
+        "operationId": "deleteAllNotifications",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "All notifications deleted" } }
+      }
+    },
+    "/api/v1/learning/articles": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get articles",
+        "operationId": "getArticles",
+        "parameters": [
+          { "name": "category", "in": "query", "schema": { "type": "string" } },
+          { "name": "difficulty", "in": "query", "schema": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated articles",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Article" } } } }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Learning"],
+        "summary": "Create article (admin)",
+        "operationId": "createArticle",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "content", "category"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "content": { "type": "string" },
+                  "category": { "type": "string" },
+                  "difficulty": { "type": "string" },
+                  "readTime": { "type": "integer" },
+                  "author": { "type": "string" },
+                  "tags": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Article created" } }
+      }
+    },
+    "/api/v1/learning/articles/{id}": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get article by ID",
+        "operationId": "getArticleById",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Article detail" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/learning/videos": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get videos",
+        "operationId": "getVideos",
+        "parameters": [
+          { "name": "category", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/limitParam" },
+          { "$ref": "#/components/parameters/skipParam" }
+        ],
+        "responses": { "200": { "description": "Paginated video list" } }
+      },
+      "post": {
+        "tags": ["Learning"],
+        "summary": "Create video (admin)",
+        "operationId": "createVideo",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "201": { "description": "Video created" } }
+      }
+    },
+    "/api/v1/learning/videos/{id}": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get video by ID",
+        "operationId": "getVideoById",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Video detail" } }
+      }
+    },
+    "/api/v1/learning/glossary": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get glossary terms",
+        "operationId": "getGlossaryTerms",
+        "responses": { "200": { "description": "Glossary terms" } }
+      },
+      "post": {
+        "tags": ["Learning"],
+        "summary": "Create glossary term (admin)",
+        "operationId": "createGlossaryTerm",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "201": { "description": "Term created" } }
+      }
+    },
+    "/api/v1/learning/glossary/{id}": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get glossary term by ID",
+        "operationId": "getGlossaryTermById",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Glossary term" } }
+      }
+    },
+    "/api/v1/learning/glossary/search": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Search glossary terms",
+        "operationId": "searchGlossaryTerm",
+        "parameters": [{ "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Matching terms" } }
+      }
+    },
+    "/api/v1/learning/guides": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get guides",
+        "operationId": "getGuides",
+        "responses": { "200": { "description": "Guides list" } }
+      },
+      "post": {
+        "tags": ["Learning"],
+        "summary": "Create guide (admin)",
+        "operationId": "createGuide",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "201": { "description": "Guide created" } }
+      }
+    },
+    "/api/v1/learning/guides/{id}": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get guide by ID",
+        "operationId": "getGuideById",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Guide detail" } }
+      }
+    },
+    "/api/v1/learning/stats": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get learning content stats",
+        "operationId": "getContentStats",
+        "responses": { "200": { "description": "Stats: article count, video count, total views" } }
+      }
+    },
+    "/api/v1/learning/featured": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get featured content",
+        "operationId": "getFeaturedContent",
+        "responses": { "200": { "description": "Featured articles and videos" } }
+      }
+    },
+    "/api/v1/learning/news": {
+      "get": {
+        "tags": ["Learning"],
+        "summary": "Get live crypto news",
+        "operationId": "getLiveNews",
+        "responses": { "200": { "description": "Live news feed from external sources" } }
+      }
+    },
+    "/api/v1/learning/sync/external": {
+      "post": {
+        "tags": ["Learning"],
+        "summary": "Sync external content",
+        "operationId": "syncExternalContent",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Sync results" } }
+      }
+    },
+    "/api/v1/security/status": {
+      "get": {
+        "tags": ["Security"],
+        "summary": "Get security status",
+        "operationId": "getSecurityStatus",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Security status",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "$ref": "#/components/schemas/SecurityStatus" } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/devices": {
+      "get": {
+        "tags": ["Security"],
+        "summary": "Get active devices/sessions",
+        "operationId": "getSecurityDevices",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Active devices",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Device" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/devices/{id}": {
+      "delete": {
+        "tags": ["Security"],
+        "summary": "Remove device / revoke session",
+        "operationId": "removeSecurityDevice",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Device removed" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/security/activity": {
+      "get": {
+        "tags": ["Security"],
+        "summary": "Get security activity log",
+        "operationId": "getSecurityActivity",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Activity log",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/ActivityLogEntry" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/2fa/setup": {
+      "post": {
+        "tags": ["Security"],
+        "summary": "Set up 2FA (via Security center)",
+        "operationId": "setupSecurity2FA",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "2FA setup with secret and QR code" } }
+      }
+    },
+    "/api/v1/security/2fa/verify": {
+      "post": {
+        "tags": ["Security"],
+        "summary": "Verify and enable 2FA (via Security center)",
+        "operationId": "verifySecurity2FA",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "token": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "2FA enabled" } }
+      }
+    },
+    "/api/v1/security/2fa/disable": {
+      "post": {
+        "tags": ["Security"],
+        "summary": "Disable 2FA (via Security center)",
+        "operationId": "disableSecurity2FA",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "2FA disabled" } }
+      }
+    },
+    "/api/v1/security/permissions/{id}": {
+      "put": {
+        "tags": ["Security"],
+        "summary": "Toggle permission",
+        "operationId": "togglePermission",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "enabled": { "type": "boolean" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Permission updated" } }
+      }
+    },
+    "/api/v1/payment/plans": {
+      "get": {
+        "tags": ["Payment"],
+        "summary": "Get subscription plans",
+        "operationId": "getPlans",
+        "description": "Public endpoint — no auth required.",
+        "responses": {
+          "200": {
+            "description": "Available plans",
+            "content": {
+              "application/json": {
+                "schema": { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/SubscriptionPlan" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment/subscription": {
+      "get": {
+        "tags": ["Payment"],
+        "summary": "Get current subscription",
+        "operationId": "getSubscription",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Current subscription details" } }
+      }
+    },
+    "/api/v1/payment/checkout": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Create Stripe checkout session",
+        "operationId": "createCheckout",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["planId"],
+                "properties": {
+                  "planId": { "type": "string", "enum": ["pro", "enterprise"] },
+                  "successUrl": { "type": "string", "format": "uri" },
+                  "cancelUrl": { "type": "string", "format": "uri" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stripe checkout session",
+            "content": {
+              "application/json": {
+                "example": { "status": "success", "data": { "url": "https://checkout.stripe.com/...", "sessionId": "cs_..." } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment/cancel": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Cancel subscription",
+        "operationId": "cancelSubscription",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Subscription cancelled (at period end)" } }
+      }
+    },
+    "/api/v1/payment/portal": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Create Stripe billing portal session",
+        "operationId": "createPortalSession",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "returnUrl": { "type": "string", "format": "uri" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Billing portal URL" } }
+      }
+    },
+    "/api/v1/payment/billing-history": {
+      "get": {
+        "tags": ["Payment"],
+        "summary": "Get billing history",
+        "operationId": "getBillingHistory",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Invoices and payments" } }
+      }
+    },
+    "/api/v1/payment/webhook": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Stripe webhook handler",
+        "operationId": "handleWebhook",
+        "description": "**Do not call manually.** Receives Stripe webhook events (raw body). Requires `Stripe-Signature` header.",
+        "parameters": [
+          { "name": "Stripe-Signature", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        },
+        "responses": { "200": { "description": "Event processed" }, "400": { "description": "Invalid signature or event" } }
+      }
+    }
+  }
+}
