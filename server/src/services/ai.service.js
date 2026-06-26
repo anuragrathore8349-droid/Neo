@@ -15,35 +15,25 @@ const {
   detectStatisticalAnomalies,
   DEFAULT_CONFIG 
 } = require('../utils/anomalies');
-const {
-  getOpenAIInsights,
-  getSentimentAnalysis,
-  generateStrategyRecommendation,
-  explainNewsImpact
-} = require('../utils/openai-integration');
 const { CRYPTO_SYMBOLS } = require('../utils/assetTypes');
+const { generateStrategyRecommendation, explainNewsImpact } = require('../utils/openai-integration');
 
 /**
  * AIService - Modern, lightweight AI service for financial analysis
- * Uses statistical methods and OpenAI API (no ML frameworks)
+ * Uses statistical methods and fallback data instead of OpenAI
  * Fully Node 20+ compatible
  */
 class AIService {
   constructor() {
     const config = require('../config');
-    const apiKey = config.openai?.apiKey;
-    if (apiKey && apiKey !== 'your-openai-api-key-here') {
-      this.hasOpenAI = true;
-      logger.info('OpenAI API configured for enhanced insights');
+    const apiKey = config.gemini?.apiKey;
+    if (apiKey) {
+      this.hasOpenAI = true;  // reuse flag name — means "AI backend available"
+      logger.info('✅ Gemini AI configured for enhanced insights (gemini-2.5-flash)');
     } else {
       this.hasOpenAI = false;
-      logger.warn('OpenAI API key not configured. AI insights will be limited.');
+      logger.warn('⚠️ GEMINI_API_KEY not set — AI will use statistical fallback. Set it in server/.env');
     }
-
-    // Service metadata
-    this.version = '2.0.0'; // Post-TensorFlow refactor
-    this.architecture = 'statistical_ensemble'; // EMA, Momentum, RSI, Volatility
-    this.startTime = new Date();
   }
 
   /**
@@ -379,12 +369,11 @@ class AIService {
   }
 
   /**
-   * Generate strategy recommendations using AI
+   * Generate strategy recommendations using Gemini AI with fallback to statistical methods
+   * Tries Gemini first, auto-falls back to statistical analysis if API fails
    */
   async getStrategyRecommendations(portfolio, preferences = {}) {
     try {
-      logger.debug('Generating strategy recommendations');
-
       const assets = Array.isArray(portfolio) ? portfolio : (portfolio?.assets || []);
 
       if (!Array.isArray(assets) || assets.length === 0) {
@@ -392,32 +381,38 @@ class AIService {
       }
 
       const portfolioObj = Array.isArray(portfolio) ? { assets: portfolio } : portfolio;
+      const marketConditions = await this.assessMarketConditions();
 
-      // Try OpenAI first if configured
+      // Try Gemini AI first
       if (this.hasOpenAI) {
         try {
-          const marketConditions = await this.assessMarketConditions();
-          const aiRecommendation = await generateStrategyRecommendation(portfolioObj, marketConditions);
-          if (aiRecommendation) {
-            const strategies = Array.isArray(aiRecommendation) ? aiRecommendation : [aiRecommendation];
+          logger.debug('🤖 Attempting Gemini AI strategy generation...');
+          const aiStrategies = await generateStrategyRecommendation(portfolioObj, marketConditions);
+          
+          if (aiStrategies && aiStrategies.length > 0) {
+            logger.info('✅ Gemini strategy recommendations generated');
             return {
-              strategies,
-              methodology: 'openai',
+              strategies: Array.isArray(aiStrategies) ? aiStrategies : [aiStrategies],
+              methodology: 'gemini_2.5_flash',
               confidence: 'high',
+              source: 'ai',
               lastUpdated: new Date().toISOString()
             };
           }
         } catch (aiError) {
-          logger.warn('OpenAI strategy failed, falling back to statistical:', aiError.message);
+          logger.warn('⚠️ Gemini API failed, falling back to statistical analysis:', aiError.message);
         }
       }
 
-      // Statistical fallback
+      // Fallback to statistical methods
+      logger.debug('📊 Using statistical strategy recommendations (fallback)');
       const recommendation = await this.getStatisticalStrategyRecommendation(portfolioObj, preferences);
+
       return {
         strategies: Array.isArray(recommendation) ? recommendation : [recommendation],
         methodology: 'statistical',
         confidence: 'medium',
+        source: 'fallback',
         lastUpdated: new Date().toISOString()
       };
 
@@ -472,11 +467,12 @@ class AIService {
   }
 
   /**
-   * Analyze news impact using OpenAI
+   * Analyze news impact using Gemini AI with fallback to statistical methods
+   * Tries Gemini first, auto-falls back to basic analysis if API fails
    */
   async analyzeNews(symbols, categories = [], timeframe = '7d', limit = 10) {
     try {
-      logger.debug(`Analyzing news for ${symbols.length} symbols`);
+      logger.debug(`Analyzing news for ${Array.isArray(symbols) ? symbols.join(',') : symbols}`);
 
       const news = await this.fetchNews(symbols, categories, timeframe, limit);
 
@@ -487,65 +483,60 @@ class AIService {
           sentiment: 'neutral',
           summary: 'No significant market events detected',
           eventCount: 0,
+          source: 'no_data',
           lastUpdated: new Date().toISOString()
         };
       }
 
-      // Use OpenAI for advanced analysis if available
+      // Try to enrich with Gemini AI insights
+      let enrichedAnalysis = news.map((n) => ({
+        title: n.title,
+        summary: n.summary || n.description || 'Market event',
+        impact: `Market impact: ${n.sentiment === 'positive' ? 'Positive' : n.sentiment === 'negative' ? 'Negative' : 'Neutral'}`,
+        sentiment: n.sentiment || 'neutral',
+        confidence: n.confidence || 0.75,
+        symbol: n.symbol,
+        category: n.category,
+        timestamp: n.timestamp,
+        source: n.source,
+        tags: n.type ? [n.type, n.category] : [n.category]
+      }));
+
+      // If Gemini is available, try to enhance analysis
       if (this.hasOpenAI) {
-        // Process news impacts SEQUENTIALLY to respect OpenAI rate limits
-        // This prevents 429 rate limit errors from parallel requests
-        const impacts = [];
-        for (const article of news.slice(0, 5)) {
-          try {
-            const impact = await explainNewsImpact(article.symbol, article.title, article.category);
-            impacts.push(impact);
-          } catch (e) {
-            logger.warn('News impact analysis failed:', e.message);
-            impacts.push(`Impact on ${article.symbol}: ${article.title}`);
-          }
+        try {
+          logger.debug('🤖 Enhancing news analysis with Gemini AI...');
+          enrichedAnalysis = await Promise.all(
+            enrichedAnalysis.map(async (article) => {
+              try {
+                const aiImpact = await explainNewsImpact(article.symbol, article.title, article.category);
+                return {
+                  ...article,
+                  aiAnalysis: aiImpact,
+                  enrichedByAI: true
+                };
+              } catch (error) {
+                logger.debug(`AI enrichment failed for ${article.title}:`, error.message);
+                return article; // Return without AI enrichment if it fails
+              }
+            })
+          );
+          logger.info(`✅ News analysis enriched with Gemini AI`);
+        } catch (error) {
+          logger.warn('⚠️ Gemini news enrichment failed, using basic analysis:', error.message);
         }
-
-        return {
-          analysis: news.map((n, idx) => ({
-            title: n.title,
-            summary: n.summary || n.description || 'Market analysis',
-            impact: impacts[idx] || 'Significant market development',
-            sentiment: n.sentiment || 'neutral',
-            confidence: n.confidence || 0.75,
-            symbol: n.symbol,
-            category: n.category,
-            timestamp: n.timestamp,
-            source: n.source,
-            tags: n.type ? [n.type, n.category] : [n.category]
-          })),
-          articles: news,
-          sentiment: this.aggregateNewsSentiment(news),
-          summary: `Found ${news.length} significant market events and developments`,
-          eventCount: news.length,
-          lastUpdated: new Date().toISOString()
-        };
-      } else {
-        return {
-          analysis: news.map((n) => ({
-            title: n.title,
-            summary: n.summary || n.description || 'Market event',
-            impact: `Market impact: ${n.sentiment === 'positive' ? 'Positive' : n.sentiment === 'negative' ? 'Negative' : 'Neutral'}`,
-            sentiment: n.sentiment || 'neutral',
-            confidence: n.confidence || 0.75,
-            symbol: n.symbol,
-            category: n.category,
-            timestamp: n.timestamp,
-            source: n.source,
-            tags: n.type ? [n.type, n.category] : [n.category]
-          })),
-          articles: news,
-          sentiment: this.aggregateNewsSentiment(news),
-          summary: `Found ${news.length} relevant market articles and events`,
-          eventCount: news.length,
-          lastUpdated: new Date().toISOString()
-        };
       }
+
+      return {
+        analysis: enrichedAnalysis,
+        articles: news,
+        sentiment: this.aggregateNewsSentiment(news),
+        summary: `Found ${news.length} relevant market articles and events`,
+        eventCount: news.length,
+        source: this.hasOpenAI ? 'gemini_enriched' : 'statistical',
+        aiEnhanced: this.hasOpenAI,
+        lastUpdated: new Date().toISOString()
+      };
     } catch (error) {
       logger.error('Error analyzing news:', error);
       throw error;
@@ -595,14 +586,8 @@ class AIService {
   async getSentimentBySource(symbol, source, timeframe) {
     switch (source) {
       case 'news':
-        if (!this.hasOpenAI) {
-          return { source: 'news', score: 0, label: 'neutral', confidence: 0, note: 'OpenAI required for news sentiment' };
-        }
         return this.getNewsSentiment(symbol, timeframe);
       case 'social':
-        if (!this.hasOpenAI) {
-          return { source: 'social', score: 0, label: 'neutral', confidence: 0, note: 'OpenAI required for social sentiment' };
-        }
         return this.getSocialSentiment(symbol, timeframe);
       case 'technical':
         return this.getTechnicalSentiment(symbol, timeframe);
