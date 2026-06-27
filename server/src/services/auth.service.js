@@ -382,19 +382,20 @@ class AuthService {
     });
   }
 
-  generateAccessToken(user) {
-    return jwt.sign(
-      {
-        id: user._id,
-        userId: user._id.toString(),
-        email: user.email,
-        role: user.role
-      },
-      config.jwt.secret,
-      { expiresIn: config.jwt.accessTokenExpiry }
-    );
-  }
-
+// AFTER — plan is included so feature-access middleware can read req.user.plan
+generateAccessToken(user) {
+  return jwt.sign(
+    {
+      id: user._id,
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      plan: user.plan || 'basic'        
+    },
+    config.jwt.secret,
+    { expiresIn: config.jwt.accessTokenExpiry }
+  );
+}
   generateRefreshToken(_user) {
     return cryptoRandomString({ length: 40, type: 'url-safe' });
   }
