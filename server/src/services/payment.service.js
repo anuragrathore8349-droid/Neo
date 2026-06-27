@@ -1,28 +1,24 @@
+// server/src/services/payment.service.js
 'use strict';
 
 const Subscription = require('../models/subscription.model');
 const User = require('../models/user.model');
 const { PLANS, getPlanById } = require('../config/plans.config');
 const { logger } = require('../api/middlewares/logger.middleware');
+const emailService = require('./email.service');
 
 const stripe = process.env.STRIPE_SECRET_KEY
   ? require('stripe')(process.env.STRIPE_SECRET_KEY)
   : null;
 
 class PaymentService {
-  /**
-   * Get all available subscription plans
-   */
   getAvailablePlans() {
     return Object.values(PLANS);
   }
 
-  /**
-   * Get a user's current subscription from DB
-   */
   async getUserSubscription(userId) {
     const subscription = await Subscription.findOne({ userId });
-    const user = await User.findById(userId).select('plan subscription');
+    const user = await User.findById(userId).select('plan subscription email firstName lastName');
     return {
       subscription,
       currentPlan: user?.plan || 'basic',
@@ -30,10 +26,6 @@ class PaymentService {
     };
   }
 
-  /**
-   * Select/activate the free plan (no Stripe involved).
-   * Used for the $0 "Basic" plan which has no stripePriceId.
-   */
   async selectFreePlan(userId) {
     const plan = getPlanById('basic');
 
@@ -67,22 +59,19 @@ class PaymentService {
     await User.findByIdAndUpdate(userId, {
       plan: 'basic',
       'subscription.status': 'active',
-      'subscription.features': plan.features,
     });
 
     return { planId: 'basic', status: 'active' };
   }
 
-  /**
-   * Create a Stripe Checkout Session for a plan upgrade.
-   * For the free plan, this short-circuits to selectFreePlan() instead
-   * since there's nothing to charge and no Stripe price exists for it.
-   */
   async createCheckoutSession(userId, planId, successUrl, cancelUrl) {
-    const plan = getPlanById(planId);
-    if (!plan) throw httpError(`Unknown plan: ${planId}`, 400);
+    let plan;
+    try {
+      plan = getPlanById(planId);
+    } catch (e) {
+      throw httpError(`Unknown plan: ${planId}`, 400);
+    }
 
-    // Free plan: activate immediately, no Stripe checkout needed.
     if (!plan.stripePriceId || plan.price === 0) {
       const result = await this.selectFreePlan(userId);
       return { free: true, ...result };
@@ -90,11 +79,10 @@ class PaymentService {
 
     if (!stripe) throw httpError('Stripe is not configured. Set STRIPE_SECRET_KEY.', 503);
 
-    // Validate that price ID is not a placeholder
     const placeholderPrices = ['price_1234567890', 'price_0987654321'];
     if (placeholderPrices.includes(plan.stripePriceId)) {
       throw httpError(
-        `Stripe price ID for "${plan.name}" plan is not configured. Please set STRIPE_PRICE_ID_${plan.id.toUpperCase()} environment variable with a valid Stripe price ID.`,
+        `Stripe price ID for "${plan.name}" plan is not configured. Please set STRIPE_PRICE_ID_${plan.id.toUpperCase()} env variable.`,
         503
       );
     }
@@ -111,9 +99,6 @@ class PaymentService {
     return { sessionId: session.id, url: session.url };
   }
 
-  /**
-   * Cancel a user's active Stripe subscription at period end
-   */
   async cancelSubscription(userId) {
     const subscription = await Subscription.findOne({ userId, status: 'active' });
 
@@ -121,13 +106,14 @@ class PaymentService {
       throw httpError('No active subscription found.', 404);
     }
 
-    // Free plan subscriptions have no Stripe subscription to cancel -
-    // just mark them cancelled and drop the user back to basic.
     if (!subscription.stripeSubscriptionId) {
       subscription.status = 'cancelled';
       subscription.cancelledAt = new Date();
       await subscription.save();
-      await User.findByIdAndUpdate(userId, { plan: 'basic' });
+      await User.findByIdAndUpdate(userId, {
+        plan: 'basic',
+        'subscription.status': 'cancelled',
+      });
       return { message: 'Subscription cancelled', cancelAt: new Date() };
     }
 
@@ -144,9 +130,6 @@ class PaymentService {
     return { message: 'Subscription will cancel at period end', cancelAt: subscription.cancelAt };
   }
 
-  /**
-   * Update default payment method on Stripe customer
-   */
   async updatePaymentMethod(userId, paymentMethodId) {
     if (!stripe) throw httpError('Stripe is not configured.', 503);
 
@@ -164,36 +147,37 @@ class PaymentService {
     return { message: 'Payment method updated successfully.' };
   }
 
-  /**
-   * Get billing history (invoices) from Stripe
-   */
   async getBillingHistory(userId) {
-    if (!stripe) return [];
-
     const subscription = await Subscription.findOne({ userId });
-    if (!subscription?.stripeCustomerId) return [];
 
-    const invoices = await stripe.invoices.list({
-      customer: subscription.stripeCustomerId,
-      limit: 24,
-    });
+    if (!subscription?.stripeCustomerId || !stripe) {
+      return [];
+    }
 
-    return invoices.data.map(inv => ({
-      id: inv.id,
-      amount: inv.amount_paid / 100,
-      currency: inv.currency.toUpperCase(),
-      status: inv.status,
-      date: new Date(inv.created * 1000).toISOString(),
-      pdf: inv.invoice_pdf,
-      description: inv.lines?.data?.[0]?.description || '',
-    }));
+    try {
+      const invoices = await stripe.invoices.list({
+        customer: subscription.stripeCustomerId,
+        limit: 50,
+      });
+
+      return invoices.data.map(invoice => ({
+        id: invoice.id,
+        amount: invoice.amount_paid / 100,
+        date: new Date(invoice.created * 1000).toISOString(),
+        status: invoice.status === 'paid' ? 'succeeded' : invoice.status === 'open' ? 'pending' : 'failed',
+        invoiceUrl: invoice.hosted_invoice_url,
+        pdfUrl: invoice.invoice_pdf,
+        period: {
+          start: invoice.period_start,
+          end: invoice.period_end,
+        },
+      }));
+    } catch (error) {
+      logger.error('Failed to fetch billing history:', error.message);
+      return [];
+    }
   }
 
-  /**
-   * Handle Stripe webhook events — call this from the controller
-   * @param {Buffer} rawBody  - raw request body (express.raw middleware)
-   * @param {string} signature - stripe-signature header
-   */
   async handleWebhook(rawBody, signature) {
     if (!stripe) throw httpError('Stripe is not configured.', 503);
 
@@ -211,26 +195,18 @@ class PaymentService {
     logger.info(`Stripe webhook received: ${event.type}`);
 
     switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object;
-        await this._handleCheckoutComplete(session);
+      case 'checkout.session.completed':
+        await this._handleCheckoutComplete(event.data.object);
         break;
-      }
-      case 'invoice.payment_succeeded': {
-        const invoice = event.data.object;
-        await this._handlePaymentSucceeded(invoice);
+      case 'invoice.payment_succeeded':
+        await this._handlePaymentSucceeded(event.data.object);
         break;
-      }
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object;
-        await this._handlePaymentFailed(invoice);
+      case 'invoice.payment_failed':
+        await this._handlePaymentFailed(event.data.object);
         break;
-      }
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object;
-        await this._handleSubscriptionDeleted(sub);
+      case 'customer.subscription.deleted':
+        await this._handleSubscriptionDeleted(event.data.object);
         break;
-      }
       default:
         logger.debug(`Unhandled Stripe event: ${event.type}`);
     }
@@ -238,9 +214,6 @@ class PaymentService {
     return { received: true };
   }
 
-  /**
-   * Create a Stripe Billing Portal session
-   */
   async createPortalSession(userId, returnUrl) {
     if (!stripe) throw httpError('Stripe is not configured. Set STRIPE_SECRET_KEY.', 503);
 
@@ -257,51 +230,26 @@ class PaymentService {
     return { url: session.url };
   }
 
-  /**
-   * Get billing history (invoices) for a user
-   */
-  async getBillingHistory(userId) {
-    const subscription = await Subscription.findOne({ userId });
-
-    // If no Stripe customer, return empty array (free plan users)
-    if (!subscription?.stripeCustomerId || !stripe) {
-      return [];
-    }
-
-    try {
-      const invoices = await stripe.invoices.list({
-        customer: subscription.stripeCustomerId,
-        limit: 50,
-      });
-
-      return invoices.data.map(invoice => ({
-        id: invoice.id,
-        amount: invoice.amount_paid / 100, // Convert from cents to dollars
-        date: new Date(invoice.created * 1000).toISOString(),
-        status: invoice.status === 'paid' ? 'succeeded' : invoice.status === 'open' ? 'pending' : 'failed',
-        invoiceUrl: invoice.hosted_invoice_url,
-        pdfUrl: invoice.pdf,
-        period: {
-          start: invoice.period_start,
-          end: invoice.period_end,
-        },
-      }));
-    } catch (error) {
-      logger.error('Failed to fetch billing history:', error.message);
-      return [];
-    }
-  }
-
   // ── Private webhook handlers ──────────────────────────────────────────────
 
   async _handleCheckoutComplete(session) {
     const { userId, planId } = session.metadata || {};
-    if (!userId || !planId) return;
+    if (!userId || !planId) {
+      logger.error('Webhook: missing userId or planId in session metadata');
+      return;
+    }
 
-    const plan = getPlanById(planId);
-    if (!plan) return;
+    let plan;
+    try {
+      plan = getPlanById(planId);
+    } catch (e) {
+      logger.error(`Webhook: unknown planId ${planId}`);
+      return;
+    }
 
-    // Upsert subscription record
+    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    // ✅ FIX: Upsert subscription record with ALL stripe fields
     await Subscription.findOneAndUpdate(
       { userId },
       {
@@ -315,10 +263,10 @@ class PaymentService {
         status: 'active',
         startDate: new Date(),
         currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
         features: {
-          maxTransactions: typeof plan.features.maxTransactions === 'number' ? plan.features.maxTransactions : 0,
+          maxTransactions: plan.features.maxTransactions === 'Unlimited' ? 999999 : (plan.features.maxTransactions || 0),
           advancedAnalytics: !!plan.features.advancedAnalytics,
           realTimeData: !!plan.features.realTimeData,
           aiInsights: !!plan.features.aiInsights,
@@ -331,13 +279,37 @@ class PaymentService {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // Update user's plan
+    // ✅ FIX: Fully update User document — plan AND subscription sub-doc
     await User.findByIdAndUpdate(userId, {
       plan: planId,
-      'subscription.features': plan.features,
+      'subscription.stripeCustomerId': session.customer,
+      'subscription.stripeSubscriptionId': session.subscription,
+      'subscription.planId': planId,
+      'subscription.status': 'active',
+      'subscription.currentPeriodStart': new Date(),
+      'subscription.currentPeriodEnd': periodEnd,
     });
 
-    logger.info(`Subscription activated: user=${userId} plan=${planId}`);
+    logger.info(`✅ Subscription activated: user=${userId} plan=${planId}`);
+
+    // ✅ FIX: Send upgrade confirmation email
+    try {
+      const user = await User.findById(userId).select('email firstName lastName');
+      if (user?.email) {
+        await emailService.sendSubscriptionUpgradeEmail({
+          to: user.email,
+          name: `${user.firstName} ${user.lastName}`.trim() || 'Valued Customer',
+          planId,
+          planName: plan.name,
+          price: plan.price,
+          nextBillingDate: periodEnd,
+        });
+        logger.info(`📧 Upgrade email sent to ${user.email}`);
+      }
+    } catch (emailErr) {
+      // Don't fail webhook if email fails
+      logger.error('Failed to send upgrade email:', emailErr.message);
+    }
   }
 
   async _handlePaymentSucceeded(invoice) {
@@ -354,10 +326,18 @@ class PaymentService {
         currentPeriodEnd: new Date(sub.current_period_end * 1000),
       }
     );
+
+    // Also keep User in sync
+    await User.findByIdAndUpdate(userId, {
+      'subscription.status': 'active',
+      'subscription.currentPeriodEnd': new Date(sub.current_period_end * 1000),
+    });
+
     logger.info(`Payment succeeded for subscription ${invoice.subscription}`);
   }
 
   async _handlePaymentFailed(invoice) {
+    if (!invoice.subscription) return;
     const sub = await stripe.subscriptions.retrieve(invoice.subscription);
     const userId = sub.metadata?.userId;
     if (!userId) return;
@@ -366,6 +346,7 @@ class PaymentService {
       { stripeSubscriptionId: invoice.subscription },
       { status: 'past_due' }
     );
+    await User.findByIdAndUpdate(userId, { 'subscription.status': 'past_due' });
     logger.warn(`Payment failed for user ${userId}`);
   }
 
@@ -374,11 +355,15 @@ class PaymentService {
 
     await Subscription.findOneAndUpdate(
       { stripeSubscriptionId: stripeSub.id },
-      { status: 'cancelled' }
+      { status: 'cancelled', cancelledAt: new Date() }
     );
 
     if (userId) {
-      await User.findByIdAndUpdate(userId, { plan: 'basic' });
+      await User.findByIdAndUpdate(userId, {
+        plan: 'basic',
+        'subscription.status': 'cancelled',
+        'subscription.cancelledAt': new Date(),
+      });
     }
     logger.info(`Subscription cancelled: ${stripeSub.id}`);
   }
