@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as authService from '../services/auth.service';
 import * as userService from '../services/user.service';
 
@@ -51,6 +51,7 @@ interface AuthContextType {
   resetPassword: (token: string, newPassword: string) => Promise<void>;
   updateProfile: (data: Record<string, unknown>) => Promise<void>;
   updateNotificationSettings: (settings: Record<string, unknown>) => Promise<void>;
+  updateUserPlan: (planId: string) => void;
   logout: () => void;
   error: string | null;
   setError: (error: string | null) => void;
@@ -304,6 +305,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const updateUserPlan = useCallback((planId: string) => {
+    const stored = readStoredAuth();
+    if (!stored) return;
+
+    const updatedUser = { ...stored.user, plan: planId };
+    writeStoredAuth({ ...stored, user: updatedUser });
+    setUser(updatedUser);
+  }, []);
+
   const logout = useCallback(() => {
     // Fire-and-forget: tell the server to invalidate the refresh token,
     // but don't block clearing local state on it.
@@ -334,6 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetPassword,
         updateProfile,
         updateNotificationSettings,
+        updateUserPlan,
         logout,
         error,
         setError,
