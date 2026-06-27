@@ -135,6 +135,19 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.url) {
         window.location.href = response.url;
       } else if (response.free) {
+        try {
+          const { refreshToken } = await import('../services/auth.service');
+          const result = await refreshToken();
+          if (result?.data?.accessToken) {
+            const stored = JSON.parse(localStorage.getItem('neofin_auth') || '{}');
+            stored.accessToken = result.data.accessToken;
+            if (result.data.refreshToken) stored.refreshToken = result.data.refreshToken;
+            localStorage.setItem('neofin_auth', JSON.stringify(stored));
+          }
+        } catch (e) {
+          console.warn('Token refresh after free plan switch failed:', e);
+        }
+
         const normalizedPlanId = normalizePlanId(response.planId || planId);
         setUserSubscription({ planId: normalizedPlanId, status: response.status === 'active' ? 'active' : 'pending' });
         updateUserPlan(normalizedPlanId);
@@ -147,7 +160,7 @@ export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
-  }, [fetchUserSubscription]);
+  }, [fetchUserSubscription, updateUserPlan]);
 
   const cancelSubscription = useCallback(async () => {
     try {
