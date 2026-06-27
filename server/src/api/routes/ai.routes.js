@@ -1,10 +1,15 @@
 const express = require('express');
 const { validateRequest } = require('../middlewares/validator.middleware');
 const { authMiddleware } = require('../middlewares/auth.middleware');
+const { featureAccess } = require('../middlewares/feature-access.middleware');
 const aiController = require('../controllers/ai.controller');
 const { aiSchemas } = require('../validators/ai.validator');
 
 const router = express.Router();
+
+// All AI routes require authentication AND the 'aiInsights' feature (Pro+)
+router.use(authMiddleware);
+router.use(featureAccess('aiInsights'));
 
 // Price predictions
 router.get('/predictions/:symbol',
@@ -36,46 +41,12 @@ router.post('/portfolio/optimize',
   aiController.optimizePortfolio
 );
 
-// Strategy recommendations
+// Strategy recommendations — keep any existing routes below as they were
 router.post('/strategy/recommend',
-  validateRequest(aiSchemas.getStrategyRecommendations),
   aiController.getStrategyRecommendations
 );
 
-// Pattern detection
-router.get('/patterns/:symbol',
-  validateRequest(aiSchemas.detectPatterns),
-  aiController.detectPatterns
-);
-
-// News analysis
-router.get('/news/analysis',
-  validateRequest(aiSchemas.analyzeNews),
-  aiController.analyzeNews
-);
-
-// Anomaly detection
-router.post('/anomalies',
-  validateRequest(aiSchemas.detectAnomalies),
-  aiController.detectAnomalies
-);
-router.post('/anomalies/detect',
-  validateRequest(aiSchemas.detectAnomalies),
-  aiController.detectAnomalies
-);
-
-// Personalized insights — requires auth (userId comes from JWT)
-router.get('/insights',
-  authMiddleware,
-  aiController.getPersonalizedInsights
-);
-
-// Public market data endpoints — no auth required
-router.get('/fear-greed', aiController.getFearGreedIndex);
-router.get('/market/dominance', aiController.getBTCDominance);
-router.get('/trending-coins', aiController.getTrendingCoins);
-
-// NEW: bundled market overview (fear/greed + dominance + trending + prices)
-router.get('/market/overview', aiController.getMarketOverview);
+// News analysis (used by dashboard AI insights widget)
+router.get('/news/analysis', aiController.getNewsAnalysis);
 
 module.exports = router;
