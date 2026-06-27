@@ -3,9 +3,38 @@ import { Bell, Search, Menu, X, Trash2, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { usePlan } from '../../context/PlanContext';
 import { useNotifications } from '../../hooks/useNotifications';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3003';
+
+const normalizePlanId = (planId?: string | null): string => {
+  if (!planId) return 'basic';
+
+  const normalized = String(planId).trim().toLowerCase();
+  if (normalized.includes('enterprise')) return 'enterprise';
+  if (normalized.includes('pro')) return 'pro';
+  if (normalized.includes('basic') || normalized.includes('free') || normalized.includes('starter')) return 'basic';
+  return normalized;
+};
+
+/** Returns a readable plan badge label */
+const getPlanLabel = (planId?: string): string => {
+  switch (normalizePlanId(planId)) {
+    case 'pro':        return 'Pro';
+    case 'enterprise': return 'Enterprise';
+    default:           return 'Basic';
+  }
+};
+
+/** Returns badge color class for the plan */
+const getPlanBadgeColor = (planId?: string): string => {
+  switch (normalizePlanId(planId)) {
+    case 'enterprise': return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
+    case 'pro':        return 'bg-primary/20 text-primary border border-primary/30';
+    default:           return 'bg-dark-700 text-dark-300 border border-dark-600';
+  }
+};
 
 interface HeaderProps {
   toggleSidebar: () => void;
@@ -14,20 +43,21 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
   const { user } = useAuth();
+  const { userSubscription } = usePlan();   // ← live plan from PlanContext
   const [showNotifications, setShowNotifications] = useState(false);
   const navigate = useNavigate();
   const { notifications, unreadCount, markAsRead, deleteNotification, markAllAsRead } = useNotifications();
-
   const [apiLive, setApiLive] = useState<boolean>(false);
 
-  const handleProfileClick = () => {
-    navigate('/profile');
-  };
+  // Resolve plan: prefer live subscription data, fall back to user object from auth
+  const activePlanId = normalizePlanId(userSubscription?.planId || user?.plan || 'basic');
+  const planLabel = getPlanLabel(activePlanId);
+  const planBadgeClass = getPlanBadgeColor(activePlanId);
+
+  const handleProfileClick = () => navigate('/profile');
 
   const handleNotificationClick = (notification: any) => {
-    if (!notification.isRead) {
-      markAsRead(notification._id);
-    }
+    if (!notification.isRead) markAsRead(notification._id);
     if (notification.actionUrl) {
       navigate(notification.actionUrl);
       setShowNotifications(false);
@@ -41,85 +71,67 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'error':
-        return 'text-red-400';
-      case 'warning':
-        return 'text-yellow-400';
-      case 'success':
-        return 'text-green-400';
-      default:
-        return 'text-blue-400';
+      case 'error':   return 'text-red-400';
+      case 'warning': return 'text-yellow-400';
+      case 'success': return 'text-green-400';
+      default:        return 'text-blue-400';
     }
   };
 
   const getIconForType = (type: string) => {
     const icons: Record<string, string> = {
-      order: '📈',
-      alert: '🔔',
-      security: '🔐',
-      subscription: '💳',
-      system: '⚙️',
-      defi: '🏦',
-      performance: '⭐',
-      ai_insight: '💡',
+      order: '📈', alert: '🔔', security: '🔐', subscription: '💳',
+      system: '⚙️', defi: '🏦', performance: '⭐', ai_insight: '💡',
     };
     return icons[type] || '📬';
   };
 
   useEffect(() => {
     let isMounted = true;
-
     const checkApiHealth = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/health`, { method: 'GET' });
         if (!response.ok) throw new Error('API unavailable');
         const data = await response.json();
-        if (isMounted && data?.status === 'ok') {
-          setApiLive(true);
-          return;
-        }
-        if (isMounted) setApiLive(false);
+        if (isMounted) setApiLive(data?.status === 'ok');
       } catch {
         if (isMounted) setApiLive(false);
       }
     };
-
     checkApiHealth();
     const interval = window.setInterval(checkApiHealth, 10000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(interval);
-    };
+    return () => { isMounted = false; window.clearInterval(interval); };
   }, []);
 
   return (
     <header className="fixed top-0 right-0 left-0 ml-64 h-16 bg-dark-800 border-b border-dark-700 flex items-center justify-between px-6 z-10">
       <div className="flex items-center">
-        <button 
-          onClick={toggleSidebar} 
+        <button
+          onClick={toggleSidebar}
           className="mr-4 p-2 rounded-lg hover:bg-dark-700 lg:hidden"
         >
           {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
-        
+
         <div className="relative">
           <Search size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-dark-400" />
-          <input 
-            type="text" 
-            placeholder="Search..." 
+          <input
+            type="text"
+            placeholder="Search..."
             className="input-field pl-10 w-64"
           />
         </div>
       </div>
-      
+
       <div className="flex items-center space-x-4">
         <div className="flex items-center rounded-full border border-dark-700 bg-dark-900 px-3 py-1 text-xs text-light">
           <span className={`mr-2 h-2.5 w-2.5 rounded-full ${apiLive ? 'bg-green-400' : 'bg-red-400'}`} />
           <span>{apiLive ? 'API Live' : 'API Offline'}</span>
         </div>
+
+        {/* Notification bell */}
         <div className="relative">
-          <button 
+          <button
             onClick={() => setShowNotifications(!showNotifications)}
             className="p-2 rounded-full hover:bg-dark-700 relative"
           >
@@ -130,10 +142,10 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
               </span>
             )}
           </button>
-          
+
           <AnimatePresence>
             {showNotifications && (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 10 }}
@@ -159,8 +171,8 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                     </div>
                   ) : (
                     notifications.slice(0, 10).map((notification) => (
-                      <div 
-                        key={notification._id} 
+                      <div
+                        key={notification._id}
                         className={`p-4 border-b border-dark-700 hover:bg-dark-700/50 cursor-pointer transition-colors ${
                           !notification.isRead ? 'bg-dark-700/30' : ''
                         }`}
@@ -178,17 +190,12 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                             <div className="flex items-center justify-between mt-2">
                               <span className="text-xs text-dark-500">
                                 {new Date(notification.createdAt).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
+                                  month: 'short', day: 'numeric',
+                                  hour: '2-digit', minute: '2-digit',
                                 })}
                               </span>
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteNotification(notification._id);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); deleteNotification(notification._id); }}
                                 className="text-dark-500 hover:text-red-400 transition-colors"
                               >
                                 <Trash2 size={14} />
@@ -201,10 +208,7 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                   )}
                 </div>
                 <div className="p-3 text-center border-t border-dark-700">
-                  <button 
-                    onClick={handleViewAll}
-                    className="text-primary text-sm font-medium hover:text-primary/80"
-                  >
+                  <button onClick={handleViewAll} className="text-primary text-sm font-medium hover:text-primary/80">
                     View all notifications
                   </button>
                 </div>
@@ -212,14 +216,26 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
             )}
           </AnimatePresence>
         </div>
-        
+
+        {/* Profile section — now shows live plan from PlanContext */}
         <div className="flex items-center space-x-3 cursor-pointer" onClick={handleProfileClick}>
           <div className="text-right">
             <p className="text-sm font-medium">{user?.name || 'Guest'}</p>
-            <p className="text-xs text-dark-400">{user?.plan || 'Standard Plan'}</p>
+            {/* Plan badge — reflects live subscription, not stale auth token */}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${planBadgeClass}`}>
+              {planLabel}
+            </span>
           </div>
-          <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium">
-            {user?.name?.split(' ').map((n) => n[0]).join('') || 'G'}
+          <div className="relative">
+            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium">
+              {user?.name?.split(' ').map((n) => n[0]).join('') || 'G'}
+            </div>
+            {/* Small plan indicator dot on avatar */}
+            {activePlanId !== 'basic' && (
+              <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-dark-800 ${
+                activePlanId === 'enterprise' ? 'bg-yellow-400' : 'bg-primary'
+              }`} />
+            )}
           </div>
         </div>
       </div>
