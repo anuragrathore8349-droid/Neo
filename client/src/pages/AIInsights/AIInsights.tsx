@@ -5,6 +5,9 @@ import SentimentCard from '../../components/ai/SentimentCard/SentimentCard';
 import PredictionCard from '../../components/ai/PredictionCard/PredictionCard';
 import StrategyCard from '../../components/ai/StrategyCard/StrategyCard';
 import MarketInsightCard from '../../components/ai/MarketInsightCard/MarketInsightCard';
+import { usePlan } from '../../context/PlanContext';
+import UpgradeWall from '../../components/common/UpgradeWall/UpgradeWall';
+
 import {
   Brain, Target, TrendingUp, AlertTriangle, Lightbulb,
   LineChart as LineChartIcon, RefreshCw, Zap, DollarSign
@@ -285,6 +288,8 @@ const TrendingCoins: React.FC<{ coins: any[]; loading?: boolean }> = ({ coins, l
 // ─── Main page component ──────────────────────────────────────────────────────
 
 const AIInsights: React.FC = () => {
+  const { canAccessFeature } = usePlan();
+
   // Market overview (new)
   const [marketOverview, setMarketOverview] = useState<any>(null);
   const [overviewLoading, setOverviewLoading] = useState(true);
@@ -341,6 +346,16 @@ const AIInsights: React.FC = () => {
 
   // Global refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  if (!canAccessFeature('aiInsights')) {
+    return (
+      <UpgradeWall
+        feature="AI Insights"
+        requiredPlan="Pro"
+        description="Get AI-powered market predictions, sentiment analysis, and investment strategies."
+      />
+    );
+  }
 
   // ── Fetch functions ──────────────────────────────────────────────────────
 
