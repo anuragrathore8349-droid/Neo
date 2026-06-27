@@ -1,3 +1,4 @@
+// server/src/models/subscription.model.js
 const mongoose = require('mongoose');
 
 const subscriptionSchema = new mongoose.Schema({
@@ -30,14 +31,14 @@ const subscriptionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'cancelled', 'pending', 'failed'],
+    enum: ['active', 'inactive', 'cancelled', 'pending', 'failed', 'past_due'],
     default: 'pending'
   },
   // Stripe Integration Fields
   stripeCustomerId: String,
   stripeSubscriptionId: String,
   stripePaymentMethodId: String,
-  
+
   // Dates
   startDate: {
     type: Date,
@@ -47,18 +48,25 @@ const subscriptionSchema = new mongoose.Schema({
   currentPeriodEnd: Date,
   nextBillingDate: Date,
   cancelledAt: Date,
-  
+
+  // ✅ FIX: Added missing cancel fields
+  cancelAtPeriodEnd: {
+    type: Boolean,
+    default: false
+  },
+  cancelAt: Date,
+
   // Auto-renewal
   autoRenew: {
     type: Boolean,
     default: true
   },
-  
+
   // Features included
   features: {
     maxTransactions: {
-      type: Number,
-      required: true
+      type: mongoose.Schema.Types.Mixed, // number or 'Unlimited'
+      default: 0
     },
     advancedAnalytics: {
       type: Boolean,
@@ -89,7 +97,7 @@ const subscriptionSchema = new mongoose.Schema({
       default: false
     }
   },
-  
+
   // Billing history
   payments: [{
     id: String,
@@ -103,7 +111,7 @@ const subscriptionSchema = new mongoose.Schema({
     },
     invoiceUrl: String
   }],
-  
+
   // Trial period
   trialEndsAt: Date,
   isTrialActive: {
