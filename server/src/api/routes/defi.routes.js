@@ -1,6 +1,8 @@
+// AFTER
 const express = require('express');
 const { validateRequest } = require('../middlewares/validator.middleware');
 const { authMiddleware } = require('../middlewares/auth.middleware');
+const { featureAccess } = require('../middlewares/feature-access.middleware');  // ← ADD
 const defiController = require('../controllers/defi.controller');
 const { defiSchemas } = require('../validators/defi.validator');
 
@@ -8,8 +10,8 @@ const router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(authMiddleware);
-
-// Protocol routes
+router.use(featureAccess('defiIntegration'));  // ← ADD — Enterprise only
+// // Protocol routes
 router.get('/protocols',
   validateRequest(defiSchemas.getProtocols),
   defiController.getProtocols
