@@ -43,10 +43,35 @@ router.post('/portfolio/optimize',
 
 // Strategy recommendations — keep any existing routes below as they were
 router.post('/strategy/recommend',
+  validateRequest(aiSchemas.getStrategyRecommendations),
   aiController.getStrategyRecommendations
 );
 
 // News analysis (used by dashboard AI insights widget)
-router.get('/news/analysis', aiController.getNewsAnalysis);
+router.get('/news/analysis',
+  validateRequest(aiSchemas.analyzeNews),
+  aiController.getNewsAnalysis
+);
+
+// Pattern detection
+router.get('/patterns/:symbol',
+  validateRequest(aiSchemas.detectPatterns),
+  aiController.detectPatterns
+);
+
+// Anomaly detection
+router.post('/anomalies',
+  validateRequest(aiSchemas.detectAnomalies),
+  aiController.detectAnomalies
+);
+
+// Personalized AI insights
+router.get('/insights', aiController.getPersonalizedInsights);
+
+// Market data helpers
+router.get('/fear-greed', aiController.getFearGreedIndex);
+router.get('/market/dominance', aiController.getBTCDominance);
+router.get('/trending-coins', aiController.getTrendingCoins);
+router.get('/market/overview', aiController.getMarketOverview);
 
 module.exports = router;
