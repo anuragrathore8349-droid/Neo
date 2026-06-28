@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as paymentService from '../services/payment.service';
-import { useAuth } from './AuthContext';
+import { useAuthSafe } from './AuthContext';
 
 interface Plan {
   id: string;
@@ -57,7 +57,10 @@ const FEATURE_ACCESS: Record<string, string[]> = {
 };
 
 export const PlanProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { updateUserPlan } = useAuth();   // ← consume AuthContext
+  // Use a safe auth hook: `useAuthSafe` returns `null` when AuthProvider
+  // is not mounted yet (avoids crash during SSR or during provider re-ordering)
+  const auth = useAuthSafe();
+  const updateUserPlan = auth?.updateUserPlan ?? (() => {});
   const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
   const [userSubscription, setUserSubscription] = useState<UserSubscription | null>(null);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
