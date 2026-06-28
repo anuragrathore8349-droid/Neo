@@ -93,7 +93,7 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
         const response = await fetch(`${API_BASE_URL}/health`, { method: 'GET' });
         if (!response.ok) throw new Error('API unavailable');
         const data = await response.json();
-        if (isMounted) setApiLive(data?.status === 'ok');
+        if (isMounted) setApiLive(data?.status === 'success' && data?.data?.status === 'ok');
       } catch {
         if (isMounted) setApiLive(false);
       }
