@@ -41,7 +41,7 @@ module.exports = {
       ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
       : ['http://localhost:5173'],
     methods:        ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Accept', 'X-Requested-With'],
     credentials:    true,
   },
 
@@ -76,12 +76,12 @@ gemini: {
   },
 
   email: {
-    host:     process.env.SMTP_HOST,
+    host:     process.env.SMTP_HOST?.trim(),
     port:     parseInt(process.env.SMTP_PORT, 10) || 587,
     secure:   parseInt(process.env.SMTP_PORT, 10) === 465,
-    user:     process.env.SMTP_USER,
-    password: process.env.SMTP_PASSWORD,
-    from:     process.env.EMAIL_FROM || 'no-reply@neofin.com',
+    user:     process.env.SMTP_USER?.trim(),
+    password: process.env.SMTP_PASSWORD?.trim(),
+    from:     process.env.EMAIL_FROM?.trim() || 'no-reply@neofin.com',
   },
 
   appUrl: process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173',
