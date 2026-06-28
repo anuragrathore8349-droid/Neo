@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -57,20 +57,41 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 const MainLayout: React.FC<{ sidebarOpen: boolean; toggleSidebar: () => void }> = ({ sidebarOpen, toggleSidebar }) => (
   <div className="min-h-screen bg-dark-900 text-light">
+    {/* Mobile overlay backdrop */}
+    {sidebarOpen && (
+      <div
+        className="fixed inset-0 bg-black/60 z-20 lg:hidden"
+        onClick={toggleSidebar}
+      />
+    )}
+    <Sidebar isOpen={sidebarOpen} onClose={toggleSidebar} />
     <Header toggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
-    <div className="flex">
-      <Sidebar />
-      <div className={`flex-1 transition-all duration-300 ${sidebarOpen ? 'ml-64' : 'ml-0'}`}>
-        <main className="p-6 pt-24">
-          <Outlet />
-        </main>
-      </div>
+    {/* On large screens, always offset for sidebar. On mobile, no offset. */}
+    <div className={`transition-all duration-300 pt-16 lg:ml-64`}>
+      <main className="p-4 sm:p-6">
+        <Outlet />
+      </main>
     </div>
   </div>
 );
 
 function AppRoutes() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Default open on desktop, closed on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
+
+  // Close sidebar on resize to small screen
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      } else {
+        setSidebarOpen(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
   return (
@@ -110,7 +131,6 @@ function AppRoutes() {
         <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-        {/* NEW Markets page */}
         <Route path="/markets" element={<ProtectedRoute><Markets /></ProtectedRoute>} />
       </Route>
 
