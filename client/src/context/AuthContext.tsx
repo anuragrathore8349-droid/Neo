@@ -85,9 +85,10 @@ function clearStoredAuth() {
 }
 
 function deriveDisplayName(user: { firstName?: string; lastName?: string; name?: string; email?: string }): string {
-  if (user.name) return user.name;
   const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-  return full || user.email || '';
+  if (full) return full;
+  if (user.name) return user.name;
+  return user.email || '';
 }
 
 function normalizeUser(rawUser: any): User {
@@ -272,13 +273,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const updateProfile = useCallback(async (data: Record<string, unknown>) => {
+const updateProfile = useCallback(async (data: Record<string, unknown>) => {
     setError(null);
     const stored = readStoredAuth();
     if (!stored) throw new Error('Not authenticated');
 
     try {
-      const response = await userService.updateProfile(stored.accessToken, data);
+      const response = await userService.updateProfile(data);
       if (response.data) {
         const mergedUser = normalizeUser({ ...stored.user, ...response.data });
         writeStoredAuth({ ...stored, user: mergedUser });
@@ -297,14 +298,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!stored) throw new Error('Not authenticated');
 
     try {
-      await userService.updateNotificationSettings(stored.accessToken, settings as Record<string, boolean>);
+      await userService.updateNotificationSettings(settings as Record<string, boolean>);
     } catch (err: any) {
       const message = err?.message || 'Failed to update notification settings';
       setError(message);
       throw err;
     }
   }, []);
-
+  
   const updateUserPlan = useCallback((planId: string) => {
     const stored = readStoredAuth();
     if (!stored) return;
@@ -361,4 +362,10 @@ export const useAuth = () => {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+};
+
+// Non-throwing variant for consumers that may mount outside the provider
+export const useAuthSafe = () => {
+  const context = useContext(AuthContext);
+  return context ?? null;
 };
