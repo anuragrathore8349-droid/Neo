@@ -10,7 +10,6 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3003';
 
 const normalizePlanId = (planId?: string | null): string => {
   if (!planId) return 'basic';
-
   const normalized = String(planId).trim().toLowerCase();
   if (normalized.includes('enterprise')) return 'enterprise';
   if (normalized.includes('pro')) return 'pro';
@@ -18,7 +17,6 @@ const normalizePlanId = (planId?: string | null): string => {
   return normalized;
 };
 
-/** Returns a readable plan badge label */
 const getPlanLabel = (planId?: string): string => {
   switch (normalizePlanId(planId)) {
     case 'pro':        return 'Pro';
@@ -27,7 +25,6 @@ const getPlanLabel = (planId?: string): string => {
   }
 };
 
-/** Returns badge color class for the plan */
 const getPlanBadgeColor = (planId?: string): string => {
   switch (normalizePlanId(planId)) {
     case 'enterprise': return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
@@ -43,13 +40,13 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
   const { user } = useAuth();
-  const { userSubscription } = usePlan();   // ← live plan from PlanContext
+  const { userSubscription } = usePlan();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const navigate = useNavigate();
   const { notifications, unreadCount, markAsRead, deleteNotification, markAllAsRead } = useNotifications();
   const [apiLive, setApiLive] = useState<boolean>(false);
 
-  // Resolve plan: prefer live subscription data, fall back to user object from auth
   const activePlanId = normalizePlanId(userSubscription?.planId || user?.plan || 'basic');
   const planLabel = getPlanLabel(activePlanId);
   const planBadgeClass = getPlanBadgeColor(activePlanId);
@@ -67,15 +64,6 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
   const handleViewAll = () => {
     navigate('/notifications');
     setShowNotifications(false);
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'error':   return 'text-red-400';
-      case 'warning': return 'text-yellow-400';
-      case 'success': return 'text-green-400';
-      default:        return 'text-blue-400';
-    }
   };
 
   const getIconForType = (type: string) => {
@@ -104,27 +92,64 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
   }, []);
 
   return (
-    <header className="fixed top-0 right-0 left-0 ml-64 h-16 bg-dark-800 border-b border-dark-700 flex items-center justify-between px-6 z-10">
-      <div className="flex items-center">
+    <header className="fixed top-0 left-0 right-0 lg:ml-64 h-16 bg-dark-800 border-b border-dark-700 flex items-center justify-between px-3 sm:px-6 z-10">
+      {/* Left section */}
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Hamburger — always visible */}
         <button
           onClick={toggleSidebar}
-          className="mr-4 p-2 rounded-lg hover:bg-dark-700 lg:hidden"
+          className="p-2 rounded-lg hover:bg-dark-700 text-dark-300 hover:text-light flex-shrink-0"
+          aria-label="Toggle sidebar"
         >
           {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
 
-        <div className="relative">
+        {/* Search — hidden on xs, inline on sm+ */}
+        <div className="relative hidden sm:block">
           <Search size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-dark-400" />
           <input
             type="text"
             placeholder="Search..."
-            className="input-field pl-10 w-64"
+            className="input-field pl-10 w-40 md:w-64"
           />
         </div>
+
+        {/* Mobile search toggle */}
+        <button
+          onClick={() => setShowSearch(!showSearch)}
+          className="p-2 rounded-lg hover:bg-dark-700 sm:hidden"
+          aria-label="Search"
+        >
+          <Search size={20} />
+        </button>
       </div>
 
-      <div className="flex items-center space-x-4">
-        <div className="flex items-center rounded-full border border-dark-700 bg-dark-900 px-3 py-1 text-xs text-light">
+      {/* Mobile search bar — full width below header on small screens */}
+      <AnimatePresence>
+        {showSearch && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute top-16 left-0 right-0 bg-dark-800 border-b border-dark-700 p-3 sm:hidden z-10"
+          >
+            <div className="relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+              <input
+                type="text"
+                placeholder="Search..."
+                className="input-field pl-10 w-full"
+                autoFocus
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Right section */}
+      <div className="flex items-center gap-2 sm:gap-4">
+        {/* API status — hidden on mobile */}
+        <div className="hidden md:flex items-center rounded-full border border-dark-700 bg-dark-900 px-3 py-1 text-xs text-light">
           <span className={`mr-2 h-2.5 w-2.5 rounded-full ${apiLive ? 'bg-green-400' : 'bg-red-400'}`} />
           <span>{apiLive ? 'API Live' : 'API Offline'}</span>
         </div>
@@ -150,10 +175,10 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 10 }}
                 transition={{ duration: 0.2 }}
-                className="absolute right-0 mt-2 w-96 bg-dark-800 border border-dark-700 rounded-xl shadow-lg z-20"
+                className="absolute right-0 mt-2 w-[min(22rem,90vw)] bg-dark-800 border border-dark-700 rounded-xl shadow-lg z-20"
               >
                 <div className="p-4 border-b border-dark-700 flex justify-between items-center">
-                  <h3 className="font-semibold">Notifications ({unreadCount})</h3>
+                  <h3 className="font-semibold text-sm sm:text-base">Notifications ({unreadCount})</h3>
                   {unreadCount > 0 && (
                     <button
                       onClick={() => markAllAsRead()}
@@ -163,7 +188,7 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                     </button>
                   )}
                 </div>
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-80 overflow-y-auto">
                   {!Array.isArray(notifications) || notifications.length === 0 ? (
                     <div className="p-8 text-center text-dark-400">
                       <Bell size={24} className="mx-auto mb-2 opacity-50" />
@@ -173,20 +198,20 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
                     notifications.slice(0, 10).map((notification) => (
                       <div
                         key={notification._id}
-                        className={`p-4 border-b border-dark-700 hover:bg-dark-700/50 cursor-pointer transition-colors ${
+                        className={`p-3 sm:p-4 border-b border-dark-700 hover:bg-dark-700/50 cursor-pointer transition-colors ${
                           !notification.isRead ? 'bg-dark-700/30' : ''
                         }`}
                         onClick={() => handleNotificationClick(notification)}
                       >
                         <div className="flex justify-between items-start gap-3">
-                          <div className="flex-1">
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-lg">{getIconForType(notification.type)}</span>
-                              <h4 className={`font-medium text-sm ${!notification.isRead ? 'text-white' : 'text-dark-300'}`}>
+                              <span className="text-base">{getIconForType(notification.type)}</span>
+                              <h4 className={`font-medium text-sm truncate ${!notification.isRead ? 'text-white' : 'text-dark-300'}`}>
                                 {notification.title}
                               </h4>
                             </div>
-                            <p className="text-xs text-dark-400 mt-1">{notification.message}</p>
+                            <p className="text-xs text-dark-400 mt-1 line-clamp-2">{notification.message}</p>
                             <div className="flex items-center justify-between mt-2">
                               <span className="text-xs text-dark-500">
                                 {new Date(notification.createdAt).toLocaleDateString('en-US', {
@@ -217,20 +242,18 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar, sidebarOpen }) => {
           </AnimatePresence>
         </div>
 
-        {/* Profile section — now shows live plan from PlanContext */}
-        <div className="flex items-center space-x-3 cursor-pointer" onClick={handleProfileClick}>
-          <div className="text-right">
-            <p className="text-sm font-medium">{user?.name || 'Guest'}</p>
-            {/* Plan badge — reflects live subscription, not stale auth token */}
+        {/* Profile section */}
+        <div className="flex items-center gap-2 sm:gap-3 cursor-pointer" onClick={handleProfileClick}>
+          <div className="hidden sm:block text-right">
+            <p className="text-sm font-medium truncate max-w-[100px]">{user?.name || 'Guest'}</p>
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${planBadgeClass}`}>
               {planLabel}
             </span>
           </div>
-          <div className="relative">
-            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium">
-              {user?.name?.split(' ').map((n) => n[0]).join('') || 'G'}
+          <div className="relative flex-shrink-0">
+            <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium text-sm">
+              {user?.name?.split(' ').map((n: string) => n[0]).join('') || 'G'}
             </div>
-            {/* Small plan indicator dot on avatar */}
             {activePlanId !== 'basic' && (
               <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-dark-800 ${
                 activePlanId === 'enterprise' ? 'bg-yellow-400' : 'bg-primary'
