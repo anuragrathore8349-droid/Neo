@@ -13,6 +13,7 @@ const openapiDocument = require('../openapi.generated.json');
 const WebSocketServer = require('./websockets');
 const { errorMiddleware } = require('./api/middlewares/error.middleware');
 const { loggerMiddleware } = require('./api/middlewares/logger.middleware');
+const paymentRoutes = require('./api/routes/payment.routes');
 const config = require('./config');
 const { connectDB, redisClient } = require('./config/database');
 
@@ -35,7 +36,15 @@ app.use(helmet({
 app.use(cors(config.corsOptions));
 app.use(compression());
 
-app.use(express.json({ limit: '10mb' }));
+const jsonParser = express.json({ limit: '10mb' });
+app.use((req, res, next) => {
+  // Preserve raw Stripe webhook payload for signature validation.
+  if (req.originalUrl === '/api/v1/payment/webhook' && req.method === 'POST') {
+    return next();
+  }
+  return jsonParser(req, res, next);
+});
+
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(loggerMiddleware);
@@ -71,6 +80,7 @@ const csrfProtection = csurf({
   }
 });
 
+app.use('/api/v1/payment', paymentRoutes.webhookRouter);
 app.use('/api/v1', csrfProtection);
 app.get('/api/v1/csrf-token', (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
@@ -78,7 +88,7 @@ app.get('/api/v1/csrf-token', (req, res) => {
 
 // ── API Routes ────────────────────────────────────────────────────────────
 app.use('/api/v1/auth',             require('./api/routes/auth.routes'));
-app.use('/api/v1/payment',          require('./api/routes/payment.routes'));
+app.use('/api/v1/payment',          paymentRoutes.router);
 app.use('/api/v1/trading',          require('./api/routes/trading.routes'));
 app.use('/api/v1/market',           require('./api/routes/market.routes'));
 app.use('/api/v1/defi',             require('./api/routes/defi.routes'));
