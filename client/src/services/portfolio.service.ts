@@ -178,7 +178,7 @@ export async function getAiInsights(): Promise<{ status: string; data: AiInsight
   try {
     // Try primary AI insights endpoint
     try {
-      const response = await apiFetch('/api/ai-insights');
+      const response = await apiFetch('/api/ai/insights');
       return {
         status: 'success',
         data: response.data || response || []
