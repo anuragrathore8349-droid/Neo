@@ -4,7 +4,7 @@ import PortfolioSummary from '../../components/dashboard/PortfolioSummary';
 import PerformanceChart from '../../components/dashboard/PerformanceChart';
 import AssetAllocation from '../../components/dashboard/AssetAllocation';
 import RecentTransactions from '../../components/dashboard/RecentTransactions';
-import AiInsights from '../../components/dashboard/AiInsights';
+import AiInsights, { fallbackAiInsights } from '../../components/dashboard/AiInsights';
 import MarketOverview from '../../components/trading/MarketOverview';
 import { exportPortfolioData, getPortfolioSummary, getPortfolioAssets, getPortfolioHistory, getRecentTransactions, PortfolioSummary as PortfolioSummaryType, PortfolioAsset, PerformanceData, Transaction, AiInsight } from '../../services/portfolio.service';
 import { getDepositAddress, getWallets, DepositAddress } from '../../services/wallet.service';
@@ -12,15 +12,21 @@ import { getMarketAssets, MarketAsset } from '../../services/market.service';
 import aiService from '../../services/ai.service';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
+import { usePlan } from '../../context/PlanContext';
+import { useNavigate } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
+  const { canAccessFeature } = usePlan();
+  const navigate = useNavigate();
+  const canSeeAiInsights = canAccessFeature('aiInsights');
+
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummaryType | null>(null);
   const [chartData, setChartData] = useState<PerformanceData[]>([]);
   const [portfolioAssets, setPortfolioAssets] = useState<PortfolioAsset[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [aiInsights, setAiInsights] = useState<AiInsight[]>([]);
+  const [aiInsights, setAiInsights] = useState<AiInsight[]>(fallbackAiInsights);
   const [marketAssets, setMarketAssets] = useState<MarketAsset[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
@@ -247,53 +253,23 @@ const Dashboard: React.FC = () => {
       try {
         setLoading(true);
 
-        // 🔥 FAST PATH: Fetch portfolio summary FIRST to display instantly
-        try {
-          const summaryResponse = await getPortfolioSummary();
-          if (summaryResponse?.data) {
-            setPortfolioSummary(summaryResponse.data);
-            console.log('✓ Portfolio Summary loaded instantly:', summaryResponse.data);
-          }
-        } catch (err) {
-          console.warn('Portfolio Summary fetch failed:', err);
-        }
+        // Fetch portfolio summary in the background so the dashboard can render immediately.
+        void getPortfolioSummary()
+          .then((summaryResponse) => {
+            if (summaryResponse?.data) {
+              setPortfolioSummary(summaryResponse.data);
+              console.log('✓ Portfolio Summary loaded instantly:', summaryResponse.data);
+            }
+          })
+          .catch((err) => {
+            console.warn('Portfolio Summary fetch failed:', err);
+          });
 
-        // 🔥 PARALLEL: Fetch remaining data in parallel while summary displays
-        const [assets, history, txns, marketData, aiInsightsData] = await Promise.allSettled([
+        const [assets, history, txns, marketData] = await Promise.allSettled([
           getPortfolioAssets(),
           getPortfolioHistory(),
           getRecentTransactions(),
-          getMarketAssets(),
-          // Fetch AI insights using aiService like the AIInsights page does
-          aiService.analyzeNews('BTC,ETH,SOL', 'general,technical', '48h', 5)
-            .then(data => {
-              // Format insights from news analysis
-              const analysisData = data?.analysis || data?.articles || [];
-              const formatted: AiInsight[] = analysisData
-                .slice(0, 5)
-                .map((insight: any) => ({
-                  id: `insight-${Date.now()}-${Math.random()}`,
-                  type: (insight.type || 'prediction') as 'prediction' | 'alert' | 'recommendation' | 'news',
-                  title: insight.title || 'Market Event',
-                  description: insight.summary || insight.description || 'AI analysis of market developments',
-                  asset: insight.asset || {
-                    id: 'btc',
-                    name: 'Bitcoin',
-                    symbol: 'BTC',
-                    type: 'crypto' as const,
-                    price: 0,
-                    change24h: 0
-                  },
-                  confidence: insight.confidence || 75,
-                  date: insight.timestamp || new Date().toISOString(),
-                  action: (insight.sentiment === 'positive' ? 'buy' : insight.sentiment === 'negative' ? 'sell' : 'hold') as 'buy' | 'sell' | 'hold'
-                }));
-              return { status: 'success', data: formatted };
-            })
-            .catch((error) => {
-              console.warn('AI insights fetch failed (non-critical):', error);
-              return { status: 'error', data: [] };
-            })
+          getMarketAssets()
         ]);
 
         if (assets.status === 'fulfilled' && assets.value?.data && Array.isArray(assets.value.data) && assets.value.data.length > 0) {
@@ -325,16 +301,42 @@ const Dashboard: React.FC = () => {
           console.warn('Market Assets fetch failed:', marketData.reason);
         }
 
-        if (aiInsightsData.status === 'fulfilled' && aiInsightsData.value?.data && Array.isArray(aiInsightsData.value.data)) {
-          if (aiInsightsData.value.data.length > 0) {
-            setAiInsights(aiInsightsData.value.data);
-            console.log('✓ AI Insights loaded from /api/ai/news/analysis:', aiInsightsData.value.data.length, 'insights');
-          } else {
-            console.warn('AI Insights returned empty array — no insights to show');
+        void (async () => {
+          try {
+            const data = await aiService.analyzeNews('BTC,ETH,SOL', 'general,technical', '48h', 5);
+            const analysisData = data?.analysis || data?.articles || [];
+            const formatted: AiInsight[] = analysisData
+              .slice(0, 5)
+              .map((insight: any) => ({
+                id: `insight-${Date.now()}-${Math.random()}`,
+                type: (insight.type || 'prediction') as 'prediction' | 'alert' | 'recommendation' | 'news',
+                title: insight.title || 'Market Event',
+                description: insight.summary || insight.description || 'AI analysis of market developments',
+                asset: insight.asset || {
+                  id: 'btc',
+                  name: 'Bitcoin',
+                  symbol: 'BTC',
+                  type: 'crypto' as const,
+                  price: 0,
+                  change24h: 0
+                },
+                confidence: insight.confidence || 75,
+                date: insight.timestamp || new Date().toISOString(),
+                action: (insight.sentiment === 'positive' ? 'buy' : insight.sentiment === 'negative' ? 'sell' : 'hold') as 'buy' | 'sell' | 'hold'
+              }));
+
+            if (formatted.length > 0) {
+              setAiInsights(formatted);
+              console.log('✓ AI Insights loaded from /api/ai/news/analysis:', formatted.length, 'insights');
+            } else {
+              setAiInsights(fallbackAiInsights);
+              console.warn('AI Insights returned empty array — showing fallback content');
+            }
+          } catch (error) {
+            console.warn('AI insights fetch failed (non-critical):', error);
+            setAiInsights(fallbackAiInsights);
           }
-        } else if (aiInsightsData.status === 'rejected') {
-          console.warn('AI Insights fetch failed:', aiInsightsData.reason);
-        }
+        })();
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
         setDataError('Failed to load dashboard data. Please refresh the page.');
@@ -387,14 +389,6 @@ const Dashboard: React.FC = () => {
     const interval = setInterval(fetchSummary, 60_000);
     return () => clearInterval(interval);
   }, []);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8 flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-dark-900 p-4 sm:p-6 lg:p-8">
@@ -469,7 +463,21 @@ const Dashboard: React.FC = () => {
           <div className="lg:col-span-1">
             <div className="grid grid-cols-1 gap-6">
               <AssetAllocation assets={portfolioAssets} />
-              <AiInsights insights={aiInsights} />
+              {canSeeAiInsights ? (
+                <AiInsights insights={aiInsights} />
+              ) : (
+                <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 text-center">
+                  <div className="text-2xl mb-2">🔒</div>
+                  <p className="text-sm font-medium text-white mb-1">AI Insights</p>
+                  <p className="text-xs text-dark-400 mb-3">Available on Pro & Enterprise plans</p>
+                  <button
+                    onClick={() => navigate('/select-plan')}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                  >
+                    Upgrade Now
+                  </button>
+                </div>
+              )}
               <RecentTransactions transactions={transactions} />
             </div>
           </div>
