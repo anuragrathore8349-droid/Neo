@@ -72,6 +72,25 @@ export async function getMarketPrices(symbols: string[]): Promise<ApiResponse<Re
   };
 }
 
+export interface PriceAlert {
+  _id: string;
+  symbol: string;
+  condition: 'above' | 'below';
+  targetPrice: number;
+  notificationTypes: Array<'email' | 'push' | 'sms'>;
+  active: boolean;
+  triggered?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreatePriceAlertPayload {
+  symbol: string;
+  type: 'above' | 'below';
+  price: number;
+  notificationTypes: Array<'email' | 'push' | 'sms'>;
+}
+
 export async function getPriceHistory(
   symbol: string,
   interval: string = '1d',
@@ -86,6 +105,35 @@ export async function getPriceHistory(
   return {
     status: response.status || 'success',
     data: response.data || response || {},
+  };
+}
+
+export async function getPriceAlerts(limit = 50, skip = 0): Promise<ApiResponse<PriceAlert[]>> {
+  const response = await apiFetch(`/api/market/alerts?limit=${limit}&skip=${skip}`);
+  return {
+    status: response.status || 'success',
+    data: response.data || [],
+  };
+}
+
+export async function createPriceAlert(payload: CreatePriceAlertPayload): Promise<ApiResponse<PriceAlert>> {
+  const response = await apiFetch('/api/market/alerts', {
+    method: 'POST',
+    body: payload,
+  });
+  return {
+    status: response.status || 'success',
+    data: response.data || response || {} as PriceAlert,
+  };
+}
+
+export async function deletePriceAlert(alertId: string): Promise<ApiResponse<{ message: string }>> {
+  const response = await apiFetch(`/api/market/alerts/${alertId}`, {
+    method: 'DELETE',
+  });
+  return {
+    status: response.status || 'success',
+    data: response.data || response || { message: 'Deleted' },
   };
 }
 
