@@ -67,7 +67,6 @@ export async function deleteApiKey(id: string) {
   return apiFetch(`/api/user/api-keys/${id}`, { method: 'DELETE' });
 }
 
-// Security helpers
 export async function getSecurityStatus() {
   return apiFetch<{ status: string; data: any }>('/api/user/security-status');
 }
