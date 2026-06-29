@@ -155,6 +155,18 @@ const aiSchemas = {
       sensitivity: body.sensitivity,
       timeframe: body.timeframe
     }))
+  }),
+
+  portfolioChat: z.object({
+    body: z.object({
+      message: z.string().min(1, 'Message is required').max(1000),
+      history: z.array(
+        z.object({
+          role: z.enum(['user', 'assistant']),
+          text: z.string().max(2000),
+        })
+      ).max(20).default([]),
+    }),
   })
 };
 
