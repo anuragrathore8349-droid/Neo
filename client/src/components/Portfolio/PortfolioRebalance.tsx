@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, TrendingUp, Zap, ChevronDown, Check } from 'lucide-react';
+import { AlertCircle, TrendingUp, Check, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getRebalancePreview, applyRebalance, RebalanceResult } from '../../services/portfolio.service';
 
@@ -21,6 +21,13 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
   const [previewData, setPreviewData] = useState<RebalanceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const metrics = previewData?.expectedMetrics ?? {};
+  const formatMetric = (value: number | undefined, suffix = '') => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return 'N/A';
+    return `${value.toFixed(2)}${suffix}`;
+  };
 
   const objectives = [
     {
@@ -30,13 +37,13 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
       icon: '📊'
     },
     {
-      value: 'min-volatility',
+      value: 'minvar',
       label: 'Minimum Volatility',
       description: 'Reduce portfolio volatility while maintaining returns',
       icon: '🛡️'
     },
     {
-      value: 'max-return',
+      value: 'maxreturn',
       label: 'Maximum Return',
       description: 'Maximize expected returns (higher risk)',
       icon: '🚀'
@@ -46,16 +53,23 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
   const handleGetPreview = async () => {
     setLoading(true);
     setError(null);
+    if (!portfolioId) {
+      setError('Portfolio not loaded yet. Please refresh the page and try again.');
+      setLoading(false);
+      return;
+    }
     try {
       const res = await getRebalancePreview(portfolioId, objective);
       if (res.status === 'success' && res.data) {
         setPreviewData(res.data);
+        setStatusMessage(res.data.message || 'Preview generated successfully.');
         setStep('preview');
       } else {
+        setStatusMessage(res.message || 'Failed to generate preview');
         setError(res.message || 'Failed to generate preview');
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate preview');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to generate preview');
     } finally {
       setLoading(false);
     }
@@ -64,9 +78,15 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
   const handleApplyRebalance = async () => {
     setLoading(true);
     setError(null);
+    if (!portfolioId) {
+      setError('Portfolio not loaded yet. Please refresh the page and try again.');
+      setLoading(false);
+      return;
+    }
     try {
       const res = await applyRebalance(portfolioId, objective);
       if (res.status === 'success') {
+        setStatusMessage(res.message || 'Portfolio rebalanced successfully.');
         setStep('complete');
         setTimeout(() => {
           onRebalanced();
@@ -75,17 +95,11 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
       } else {
         setError(res.message || 'Failed to apply rebalance');
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to apply rebalance');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to apply rebalance');
     } finally {
       setLoading(false);
     }
-  };
-
-  const getMetricChange = (metric: string) => {
-    if (!previewData?.expectedMetrics) return null;
-    const value = previewData.expectedMetrics[metric as keyof typeof previewData.expectedMetrics];
-    return value ? `${value.toFixed(2)}%` : 'N/A';
   };
 
   if (!isOpen) return null;
@@ -181,19 +195,19 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                     <div>
                       <p className="text-dark-400 text-sm">Sharpe Ratio</p>
                       <p className="text-lg font-bold text-primary">
-                        {previewData.expectedMetrics.sharpe?.toFixed(2) || 'N/A'}
+                        {formatMetric(metrics.sharpe)}
                       </p>
                     </div>
                     <div>
                       <p className="text-dark-400 text-sm">Volatility</p>
                       <p className="text-lg font-bold text-yellow-400">
-                        {previewData.expectedMetrics.volatility?.toFixed(2) || 'N/A'}%
+                        {formatMetric(metrics.volatility, '%')}
                       </p>
                     </div>
                     <div>
                       <p className="text-dark-400 text-sm">Max Drawdown</p>
                       <p className="text-lg font-bold text-red-400">
-                        {previewData.expectedMetrics.maxDrawdown?.toFixed(2) || 'N/A'}%
+                        {formatMetric(metrics.maxDrawdown, '%')}
                       </p>
                     </div>
                   </div>
@@ -203,38 +217,50 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                 <div className="space-y-3">
                   <h3 className="font-semibold text-white">Recommended Trades</h3>
                   <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {previewData.trades.map((trade) => (
-                      <div
-                        key={trade.symbol}
-                        className="bg-dark-700/50 p-3 rounded-lg flex items-center justify-between"
-                      >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="font-semibold text-white">{trade.symbol}</p>
-                            <span className={`text-xs px-2 py-1 rounded ${
-                              trade.action === 'BUY'
-                                ? 'bg-green-500/20 text-green-400'
-                                : trade.action === 'SELL'
-                                ? 'bg-red-500/20 text-red-400'
-                                : 'bg-dark-600 text-dark-300'
-                            }`}>
-                              {trade.action}
-                            </span>
-                          </div>
-                          <p className="text-sm text-dark-400">
-                            {trade.currentAllocation}% → {trade.recommendedAllocation}%
-                            {trade.differencePercent !== '0.00' && (
-                              <span className={trade.differencePercent.startsWith('-') ? 'text-red-400' : 'text-green-400'}>
-                                {' '}({trade.differencePercent}%)
+                    {(previewData.trades ?? []).length > 0 ? (
+                      (previewData.trades ?? []).map((trade) => (
+                        <div
+                          key={trade.symbol}
+                          className="bg-dark-700/50 p-3 rounded-lg flex items-center justify-between"
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-white">{trade.symbol}</p>
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                trade.action === 'BUY'
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : trade.action === 'SELL'
+                                  ? 'bg-red-500/20 text-red-400'
+                                  : 'bg-dark-600 text-dark-300'
+                              }`}>
+                                {trade.action}
                               </span>
-                            )}
-                          </p>
+                            </div>
+                            <p className="text-sm text-dark-400">
+                              {trade.currentAllocation}% → {trade.recommendedAllocation}%
+                              {trade.differencePercent !== '0.00' && (
+                                <span className={trade.differencePercent.startsWith('-') ? 'text-red-400' : 'text-green-400'}>
+                                  {' '}({trade.differencePercent}%)
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                          <p className="font-semibold text-white">${parseFloat(trade.tradeValue).toLocaleString('en-US', { maximumFractionDigits: 2 })}</p>
                         </div>
-                        <p className="font-semibold text-white">${parseFloat(trade.tradeValue).toLocaleString('en-US', { maximumFractionDigits: 2 })}</p>
+                      ))
+                    ) : (
+                      <div className="bg-dark-700/50 p-3 rounded-lg text-sm text-dark-400">
+                        No trade recommendations were returned for this objective.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
+
+                {statusMessage && !error && (
+                  <div className="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+                    <p className="text-sm text-primary">{statusMessage}</p>
+                  </div>
+                )}
 
                 {error && (
                   <div className="p-4 bg-red-500/20 border border-red-500/50 rounded-lg flex gap-3">
@@ -268,6 +294,12 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                 <p className="text-dark-300">
                   <strong>Trades to Execute:</strong> {previewData.trades.filter(t => t.action !== 'HOLD').length}
                 </p>
+
+                {statusMessage && !error && (
+                  <div className="p-4 bg-primary/10 border border-primary/30 rounded-lg">
+                    <p className="text-sm text-primary">{statusMessage}</p>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -284,7 +316,7 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                   <Check size={32} className="text-green-400" />
                 </div>
                 <h3 className="text-2xl font-bold text-white">Rebalancing Complete!</h3>
-                <p className="text-dark-300">Your portfolio has been successfully rebalanced.</p>
+                <p className="text-dark-300">{statusMessage || 'Your portfolio has been successfully rebalanced.'}</p>
                 <p className="text-sm text-dark-400">Redirecting...</p>
               </motion.div>
             )}
