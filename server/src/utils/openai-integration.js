@@ -291,6 +291,102 @@ if (config.gemini?.apiKey) {
   logger.warn('⚠️ GEMINI_API_KEY not set — AI insights will use statistical fallback');
 }
 
+/**
+ * Portfolio-aware Gemini chat
+ * @param {string} userMessage
+ * @param {Array<{role:'user'|'model', text:string}>} history  previous turns
+ * @param {Object} portfolioContext  { assets, totalValue, totalPL, ... }
+ * @param {Object} marketPrices      { BTC: { price, change24h }, ... }
+ * @returns {Promise<string|null>}
+ */
+async function callGeminiPortfolioChat(userMessage, history = [], portfolioContext = {}, marketPrices = {}) {
+  const apiKey = config.gemini?.apiKey;
+  if (!apiKey) {
+    logger.warn('⚠️  GEMINI_API_KEY not set — portfolio chat unavailable');
+    return null;
+  }
+
+  const assetLines = (portfolioContext.assets || [])
+    .map(a =>
+      `  • ${a.symbol} (${a.name}): qty=${a.quantity ?? a.amount}, ` +
+      `value=$${(a.value || 0).toFixed(2)}, alloc=${(a.allocation || 0).toFixed(1)}%, ` +
+      `P&L=${(a.profitLoss || 0) >= 0 ? '+' : ''}$${(a.profitLoss || 0).toFixed(2)} ` +
+      `(${(a.profitLossPercentage || 0).toFixed(2)}%)`
+    )
+    .join('\n');
+
+  const priceLines = Object.entries(marketPrices)
+    .map(([sym, d]) =>
+      `  • ${sym}: $${Number(d?.price || 0).toLocaleString()} (${(d?.change24h || 0) >= 0 ? '+' : ''}${(d?.change24h || 0).toFixed(2)}% 24h)`
+    )
+    .join('\n');
+
+  const systemPrompt =
+    `You are Neo, an expert AI portfolio advisor embedded in the NeoFin trading platform.\n` +
+    `Today is ${new Date().toDateString()}.\n\n` +
+    `USER PORTFOLIO (live data):\n` +
+    `  Total Value : $${(portfolioContext.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}\n` +
+    `  Total Cost  : $${(portfolioContext.totalCost || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}\n` +
+    `  Total P&L   : ${(portfolioContext.totalPL || 0) >= 0 ? '+' : ''}$${(portfolioContext.totalPL || 0).toFixed(2)} ` +
+    `(${(portfolioContext.totalPLPercentage || 0).toFixed(2)}%)\n` +
+    `\nHoldings:\n${assetLines || '  (no assets)'}\n` +
+    `\nLIVE MARKET PRICES:\n${priceLines || '  (unavailable)'}\n\n` +
+    `Guidelines:\n` +
+    `- Answer concisely and practically — 2–4 short paragraphs max.\n` +
+    `- Reference the user's specific holdings, not generic advice.\n` +
+    `- Always flag that this is not financial advice.\n` +
+    `- If you don't know something, say so honestly.`;
+
+  const contents = [
+    { role: 'user', parts: [{ text: systemPrompt }] },
+    { role: 'model', parts: [{ text: 'Understood. I am ready to help you analyse your portfolio.' }] },
+    ...history.map(turn => ({
+      role: turn.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: turn.text }]
+    })),
+    { role: 'user', parts: [{ text: userMessage }] }
+  ];
+
+  const cacheKey = `gemini:chat:${userMessage.slice(0, 80)}:${(portfolioContext.totalValue || 0).toFixed(0)}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    logger.debug('💾 Gemini chat cache hit');
+    return cached;
+  }
+
+  return requestQueue.add(async () => {
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      try {
+        const response = await axios.post(
+          `${GEMINI_API_URL}?key=${apiKey}`,
+          {
+            contents,
+            generationConfig: {
+              maxOutputTokens: 600,
+              temperature: 0.65,
+            },
+          },
+          { timeout: 25000 }
+        );
+
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (!text) throw new Error('Empty Gemini chat response');
+        setCache(cacheKey, text);
+        return text;
+      } catch (err) {
+        if (err.response?.status === 429 && attempt < 2) {
+          logger.warn(`⏳ Gemini 429 on chat — retrying in ${(attempt + 1) * 5}s`);
+          await sleep((attempt + 1) * 5000);
+          continue;
+        }
+        logger.error('Gemini portfolio chat error:', err.message);
+        return null;
+      }
+    }
+    return null;
+  });
+}
+
 module.exports = {
   getOpenAIInsights,      // kept same name so ai.service.js imports work unchanged
   getSentimentAnalysis,
@@ -298,5 +394,6 @@ module.exports = {
   explainNewsImpact,
   getBasicExplanation,
   generateBasicStrategy,
-  callGemini,             // exported for direct use if needed
+  callGemini,
+  callGeminiPortfolioChat,
 };
