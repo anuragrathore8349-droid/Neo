@@ -70,7 +70,11 @@ class PortfolioController {
   async rebalancePortfolio(req, res, next) {
     try {
       const { portfolioId } = req.params;
-      const { objective = 'sharpe', dryRun = false } = req.body || {};
+      const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+      const objectiveValue = String(body.objective || req.query.objective || 'sharpe').toLowerCase();
+      const dryRunRaw = body.dryRun !== undefined ? body.dryRun : req.query.dryRun;
+      const dryRun = dryRunRaw === true || dryRunRaw === 'true';
+      const objective = objectiveValue || 'sharpe';
 
       if (!portfolioId) {
         return res.status(400).json({ status: 'error', message: 'portfolioId is required' });
