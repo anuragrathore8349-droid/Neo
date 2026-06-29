@@ -796,25 +796,64 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
       objective
     );
 
+    optimization.objective = objective;
+
+    const normalizeAllocationData = (allocationData) => {
+      if (!allocationData) return {};
+      if (Array.isArray(allocationData)) {
+        return allocationData.reduce((map, item) => {
+          let raw = item.weight ?? item.allocation ?? item.allocationPercentage ?? 0;
+          if (typeof raw === 'string') {
+            raw = parseFloat(raw.replace('%', '')) || 0;
+          }
+          const weight = typeof raw === 'number' ? raw / 100 : 0;
+          map[item.symbol] = Math.max(0, Math.min(1, weight));
+          return map;
+        }, {});
+      }
+      if (typeof allocationData === 'object') {
+        return Object.entries(allocationData).reduce((map, [symbol, raw]) => {
+          if (typeof raw === 'string') {
+            raw = parseFloat(raw.replace('%', '')) || 0;
+          }
+          const weight = typeof raw === 'number' ? raw / 100 : 0;
+          map[symbol] = Math.max(0, Math.min(1, weight));
+          return map;
+        }, {});
+      }
+      return {};
+    };
+
+    const allocationMap = optimization.allocationMap || normalizeAllocationData(optimization.recommendedAllocation);
+    const currentAllocationMap = optimization.currentAllocation || normalizeAllocationData(optimization.currentAllocation);
+
+    const normalizedExpectedMetrics = {
+      ...optimization.expectedMetrics,
+      sharpe: optimization.expectedMetrics?.sharpe ?? optimization.expectedMetrics?.sharpeRatio,
+      volatility: optimization.expectedMetrics?.volatility ?? optimization.expectedMetrics?.volatilityAnnual,
+      maxDrawdown: optimization.expectedMetrics?.maxDrawdown ?? optimization.expectedMetrics?.estimatedMaxDrawdown
+    };
+
     if (dryRun) {
       // Return recommendation without applying changes
       return {
         status: 'preview',
         message: `Preview generated using the ${objective} objective to rebalance your portfolio.`,
-        currentAllocation: optimization.currentAllocation,
-        recommendedAllocation: optimization.recommendedAllocation,
-        expectedMetrics: optimization.expectedMetrics,
+        currentAllocation: currentAllocationMap,
+        recommendedAllocation: allocationMap,
+        expectedMetrics: normalizedExpectedMetrics,
         rebalancing: optimization.rebalancing,
-        objective: optimization.objective,
-        trades: this.calculateTrades(portfolio.assets, optimization.recommendedAllocation),
-        applied: false
+        objective,
+        trades: this.calculateTrades(portfolio.assets, allocationMap),
+        applied: false,
+        timestamp: new Date().toISOString()
       };
     }
 
     // Apply rebalancing: Update asset allocations
     const totalValue = portfolio.totalValue || 0;
     const updatedAssets = portfolio.assets.map(asset => {
-      const recommendedAlloc = optimization.recommendedAllocation[asset.symbol] || 0;
+      const recommendedAlloc = allocationMap[asset.symbol] || 0;
       const newAmount = (totalValue * recommendedAlloc) / (asset.currentPrice || 1);
       
       return {
@@ -831,9 +870,9 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
     portfolio.rebalanceHistory.push({
       date: new Date(),
       objective,
-      previousAllocation: optimization.currentAllocation,
-      newAllocation: optimization.recommendedAllocation,
-      expectedMetrics: optimization.expectedMetrics,
+      previousAllocation: currentAllocationMap,
+      newAllocation: allocationMap,
+      expectedMetrics: normalizedExpectedMetrics,
       reason: `Rebalanced to optimize for ${objective} ratio`
     });
 
@@ -868,12 +907,12 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
     return {
       status: 'success',
       message: `Portfolio rebalanced successfully using the ${objective} objective.`,
-      currentAllocation: optimization.currentAllocation,
-      recommendedAllocation: optimization.recommendedAllocation,
-      expectedMetrics: optimization.expectedMetrics,
+      currentAllocation: currentAllocationMap,
+      recommendedAllocation: allocationMap,
+      expectedMetrics: normalizedExpectedMetrics,
       rebalancing: optimization.rebalancing,
-      objective: optimization.objective,
-      trades: this.calculateTrades(portfolio.assets, optimization.recommendedAllocation),
+      objective,
+      trades: this.calculateTrades(portfolio.assets, allocationMap),
       applied: true,
       timestamp: new Date().toISOString()
     };
@@ -887,12 +926,18 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
  * Calculate required trades for rebalancing
  */
 calculateTrades(assets, recommendedAllocation) {
-  const totalValue = assets.reduce((sum, a) => sum + (a.value || 0), 0);
+  const totalValue = assets.reduce((sum, a) => sum + (a.value || ((a.currentPrice || 0) * (a.amount || 0))), 0);
   
   return assets.map(asset => {
-    const currentValue = asset.value || 0;
+    const currentValue = asset.value || ((asset.currentPrice || 0) * (asset.amount || 0));
     const currentAllocation = totalValue > 0 ? (currentValue / totalValue) * 100 : 0;
-    const recommendedAlloc = (recommendedAllocation[asset.symbol] || 0) * 100;
+    let recommendedRaw = recommendedAllocation[asset.symbol] ?? 0;
+    if (typeof recommendedRaw === 'string') {
+      recommendedRaw = parseFloat(recommendedRaw.replace('%', '')) || 0;
+    }
+    const recommendedAlloc = typeof recommendedRaw === 'number'
+      ? (recommendedRaw > 1 ? recommendedRaw / 100 : recommendedRaw) * 100
+      : 0;
     const difference = recommendedAlloc - currentAllocation;
     const tradeValue = (difference / 100) * totalValue;
 
