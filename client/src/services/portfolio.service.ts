@@ -488,12 +488,15 @@ export interface RebalanceResult {
   message?: string;
   currentAllocation: Record<string, number>;
   recommendedAllocation: Record<string, number>;
-  expectedMetrics: {
+  expectedMetrics?: {
     sharpe?: number;
+    sharpeRatio?: number;
     volatility?: number;
+    volatilityAnnual?: number;
     maxDrawdown?: number;
+    estimatedMaxDrawdown?: number;
     return?: number;
-  };
+  } | null;
   rebalancing: Array<{ symbol: string; amount: number; value: number }>;
   trades: RebalanceTrade[];
   objective: string;
@@ -506,16 +509,18 @@ export interface RebalanceResult {
  */
 export async function getRebalancePreview(portfolioId: string, objective: string = 'sharpe'): Promise<{ status: string; data?: RebalanceResult; message?: string }> {
   try {
-    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
+    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance?objective=${encodeURIComponent(objective)}&dryRun=true`, {
       method: 'POST',
       body: { objective, dryRun: true }
     });
-    // Server wraps result in { status, data: { status:'preview', trades, ... } }
-    const inner = response.data || response;
+
+    const inner = response?.data?.data || response?.data || response;
+    const result = inner?.data || inner;
+
     return {
-      status: inner.status === 'preview' ? 'success' : (inner.status || 'success'),
-      data: inner,
-      message: inner.message
+      status: result?.status === 'preview' ? 'success' : (result?.status || 'success'),
+      data: result,
+      message: result?.message
     };
   } catch (error: any) {
     console.error('Error getting rebalance preview:', error);
@@ -531,15 +536,16 @@ export async function getRebalancePreview(portfolioId: string, objective: string
  */
 export async function applyRebalance(portfolioId: string, objective: string = 'sharpe'): Promise<{ status: string; data?: RebalanceResult; message?: string }> {
   try {
-    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance`, {
+    const response: any = await apiFetch(`/api/portfolio/${portfolioId}/rebalance?objective=${encodeURIComponent(objective)}&dryRun=false`, {
       method: 'POST',
       body: { objective, dryRun: false }
     });
-    const inner = response.data || response;
+    const inner = response?.data?.data || response?.data || response;
+    const result = inner?.data || inner;
     return {
-      status: inner.status || 'success',
-      data: inner,
-      message: inner.message
+      status: result?.status || 'success',
+      data: result,
+      message: result?.message
     };
   } catch (error: any) {
     console.error('Error applying rebalance:', error);
