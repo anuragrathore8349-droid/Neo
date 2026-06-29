@@ -91,6 +91,81 @@ class PortfolioController {
     }
   }
 
+  async optimizePortfolio(req, res, next) {
+    try {
+      const { objective = 'sharpe', constraints = {} } = req.body || {};
+
+      const objectiveMap = {
+        sharpe: 'sharpe',
+        minvar: 'minvar',
+        'min-volatility': 'minvar',
+        maxreturn: 'maxreturn',
+        'max-return': 'maxreturn',
+        return: 'maxreturn',
+        risk: 'minvar'
+      };
+      const mappedObjective = objectiveMap[objective] || 'sharpe';
+
+      const portfolio = await portfolioService.ensureUserPortfolio(req.user.userId);
+
+      if (!portfolio?.assets || portfolio.assets.length < 2) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Add at least 2 assets to your portfolio to use the optimizer'
+        });
+      }
+
+      const assets = portfolio.assets.map(a => ({
+        symbol: a.symbol,
+        name: a.name,
+        type: a.type || 'crypto',
+        amount: a.amount || 0,
+        currentPrice: a.currentPrice || 0,
+        value: a.value || 0
+      }));
+
+      const mergedConstraints = {
+        riskTolerance: 0.5,
+        minAllocation: constraints.minWeight || 0.02,
+        maxAllocation: constraints.maxWeight || 0.60
+      };
+
+      const aiService = require('../../services/ai.service');
+      const optimization = await aiService.optimizePortfolio(assets, mergedConstraints, mappedObjective);
+
+      const normalizedMetrics = {
+        expectedReturnAnnual: optimization?.expectedMetrics?.expectedReturnAnnual
+          ?? optimization?.expectedMetrics?.expectedReturn
+          ?? optimization?.expectedMetrics?.returnAnnual
+          ?? optimization?.expectedMetrics?.return
+          ?? null,
+        volatilityAnnual: optimization?.expectedMetrics?.volatilityAnnual
+          ?? optimization?.expectedMetrics?.volatility
+          ?? optimization?.expectedMetrics?.annualVolatility
+          ?? null,
+        sharpeRatio: optimization?.expectedMetrics?.sharpeRatio
+          ?? optimization?.expectedMetrics?.sharpe
+          ?? null,
+        maxDrawdown: optimization?.expectedMetrics?.maxDrawdown ?? null
+      };
+
+      res.json({
+        status: 'success',
+        data: {
+          metrics: normalizedMetrics,
+          allocation: optimization.recommendedAllocation,
+          recommendation: optimization.recommendation,
+          currentAllocation: optimization.currentAllocation,
+          rebalancing: optimization.rebalancing,
+          objective: mappedObjective
+        }
+      });
+    } catch (error) {
+      logger.error('Portfolio optimizer error:', error);
+      next(error);
+    }
+  }
+
   async getAssetPriceHistory(req, res, next) {
     try {
       const { symbol } = req.params;
