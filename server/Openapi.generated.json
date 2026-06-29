@@ -3015,6 +3015,176 @@
         "responses": { "200": { "description": "Invoices and payments" } }
       }
     },
+    "/api/ai/chat": {
+      "post": {
+        "tags": ["AI"],
+        "summary": "Portfolio Chat (Gemini)",
+        "description": "Sends a message to a Gemini 2.5 Flash AI assistant that has real-time access to the authenticated user's portfolio holdings, P&L, allocations, and live market prices. Supports multi-turn conversations via the `history` array. Falls back to a rule-based engine when `GEMINI_API_KEY` is not set.",
+        "operationId": "portfolioChat",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "example": "Which of my assets has drifted the most from its target allocation?"
+                  },
+                  "history": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "default": [],
+                    "items": {
+                      "type": "object",
+                      "required": ["role", "text"],
+                      "properties": {
+                        "role": { "type": "string", "enum": ["user", "assistant"] },
+                        "text": { "type": "string", "maxLength": 2000 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat reply with portfolio context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "reply": {
+                          "type": "string",
+                          "description": "AI-generated text response referencing the user's actual portfolio",
+                          "example": "Your BTC position has drifted +8.3% above its equal-weight target. Given current high volatility, this is an opportune time to trim and add to your underweight SOL position."
+                        },
+                        "portfolioContext": {
+                          "type": "object",
+                          "properties": {
+                            "totalValue": { "type": "number", "example": 12450.75 },
+                            "assetCount": { "type": "integer", "example": 5 },
+                            "symbols": { "type": "array", "items": { "type": "string" }, "example": ["BTC", "ETH", "SOL", "AAPL", "MSFT"] }
+                          }
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": ["gemini_2.5_flash", "statistical_fallback"],
+                          "description": "AI backend used for this response"
+                        },
+                        "timestamp": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized — valid JWT required" },
+          "422": { "description": "Validation error — message missing or too long" },
+          "500": { "description": "Internal server error" }
+        }
+      }
+    },
+    "/api/portfolio/{portfolioId}/rebalance-check": {
+      "get": {
+        "tags": ["Portfolio"],
+        "summary": "Smart Rebalance Trigger",
+        "description": "Analyses whether the portfolio should be rebalanced now by computing three signals:\n\n1. **Drift** — actual vs. equal-weight target allocation per asset (default threshold: 5%)\n2. **Volatility regime** — 14-day rolling vol on BTC used as a market proxy (low / normal / high / extreme)\n3. **Staleness** — days elapsed since the last rebalance\n\nThese three signals are combined into a composite score (0–100). A score ≥ 60 triggers a rebalance recommendation. The `urgency` field maps score ranges to `none / low / medium / high`.",
+        "operationId": "checkRebalanceTrigger",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "portfolioId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "64f3a1b2c3d4e5f6a7b8c9d0"
+          },
+          {
+            "name": "driftThreshold",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "number", "default": 0.05, "minimum": 0.01, "maximum": 0.30 },
+            "description": "Minimum absolute drift fraction to flag an asset (default: 0.05 = 5%)"
+          },
+          {
+            "name": "scoreThreshold",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "number", "default": 60, "minimum": 10, "maximum": 100 },
+            "description": "Composite score threshold above which shouldRebalance becomes true"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rebalance trigger analysis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "shouldRebalance": { "type": "boolean", "example": true },
+                        "score": { "type": "integer", "example": 74, "description": "Composite score 0–100" },
+                        "scoreThreshold": { "type": "integer", "example": 60 },
+                        "urgency": { "type": "string", "enum": ["none", "low", "medium", "high"], "example": "medium" },
+                        "reasons": { "type": "array", "items": { "type": "string" }, "example": ["BTC has drifted +8.3% from target (20% → 28.3%).", "Market volatility is high — opportune time to rebalance."] },
+                        "volatilityRegime": { "type": "string", "enum": ["low", "normal", "high", "extreme", "unknown"], "example": "high" },
+                        "driftDetails": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": { "type": "string", "example": "BTC" },
+                              "actualWeight": { "type": "number", "example": 28.3 },
+                              "targetWeight": { "type": "number", "example": 20.0 },
+                              "drift": { "type": "number", "example": 8.3, "description": "Positive = overweight vs equal-weight target" },
+                              "absDrift": { "type": "number", "example": 8.3 },
+                              "overweight": { "type": "boolean", "example": true },
+                              "flagged": { "type": "boolean", "example": true, "description": "True when absDrift > driftThreshold" }
+                            }
+                          }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "properties": {
+                            "maxDriftPct": { "type": "number", "example": 8.3 },
+                            "avgDriftPct": { "type": "number", "example": 4.1 },
+                            "flaggedAssets": { "type": "integer", "example": 2 },
+                            "totalAssets": { "type": "integer", "example": 5 },
+                            "daysSinceRebalance": { "type": ["integer", "null"], "example": 47 }
+                          }
+                        },
+                        "lastChecked": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Portfolio not found" },
+          "500": { "description": "Internal server error" }
+        }
+      }
+    },
     "/api/v1/payment/webhook": {
       "post": {
         "tags": ["Payment"],
