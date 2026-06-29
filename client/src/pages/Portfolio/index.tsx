@@ -34,7 +34,7 @@ import AssetDetails from '../../components/Portfolio/AssetDetails';
 import TransactionHistory from '../../components/Portfolio/TransactionHistory';
 import AddAssetModal from '../../components/Portfolio/AddAssetModal';
 import CSVImportModal from '../../components/Portfolio/CSVImportModal';
-import PortfolioRebalance from '../../components/portfolio/PortfolioRebalance';
+import PortfolioRebalance from '../../components/Portfolio/PortfolioRebalance';
 
 interface PortfolioProps {
   assets?: PortfolioAsset[];
@@ -78,7 +78,8 @@ const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
 const [isOptimizing, setIsOptimizing] = useState(false);
 const [optimizerResult, setOptimizerResult] = useState<any>(null);
 const [optimizerObjective, setOptimizerObjective] = useState<'sharpe' | 'minvar' | 'maxreturn'>('sharpe');
- const [showAssetLines, setShowAssetLines] = useState(false);
+const [optimizerStatus, setOptimizerStatus] = useState('');
+const [showAssetLines, setShowAssetLines] = useState(false);
 
 const fetchPortfolioData = async () => {
     try {
@@ -200,19 +201,14 @@ useEffect(() => {
         const result = await getPortfolioHistory(timeframeMap[timeframe]);
 
         if (result?.data && Array.isArray(result.data)) {
-          // Format data for recharts — preserve nulls so charts can show gaps instead of zeros
+          // ✅ FIX: Store raw numeric timestamp — format in the chart, not here
           const formattedData = result.data.map((point: any) => ({
-            date: new Date(point.timestamp || point.date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              ...(timeframe === '1Y' || timeframe === 'ALL' ? { year: '2-digit' } : {})
-            }),
+            timestamp: typeof (point.timestamp || point.date) === 'number'
+              ? (point.timestamp || point.date)
+              : new Date(point.timestamp || point.date).getTime(),
             value: point.value ?? null,
-            timestamp: point.timestamp || point.date,
-            // Include per-asset breakdown for overlay (when toggled on)
             assets: point.assets || {}
           }));
-
           setChartData(formattedData);
         } else {
           setChartData([]);
@@ -292,6 +288,19 @@ useEffect(() => {
     return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
   };
 
+  const getOptimizerMetric = (metricName: string, fallbackKeys: string[] = []) => {
+    const metrics = (optimizerResult?.metrics ?? {}) as Record<string, number | null | undefined>;
+    const directValue = metrics[metricName];
+    if (typeof directValue === 'number' && !Number.isNaN(directValue)) return directValue;
+
+    for (const fallbackKey of fallbackKeys) {
+      const fallbackValue = metrics[fallbackKey];
+      if (typeof fallbackValue === 'number' && !Number.isNaN(fallbackValue)) return fallbackValue;
+    }
+
+    return null;
+  };
+
   // Get time ago
   const getTimeAgo = (date: Date) => {
     const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
@@ -302,17 +311,42 @@ useEffect(() => {
     return `${Math.floor(seconds / 86400)}d ago`;
   };
 
+  // ✅ FIX: Format chart dates correctly per selected timeframe
+  const formatChartDate = (timestamp: number | string): string => {
+    const date = new Date(timestamp);
+    switch (timeframe) {
+      case '1W':
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      case '1M':
+      case '3M':
+      case '6M':
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      case '1Y':
+      case 'ALL':
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      default:
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  };
+
+  const getChartXAxisInterval = (): number => {
+    const count = chartData?.length || 0;
+    switch (timeframe) {
+      case '1W':   return Math.max(1, Math.floor(count / 7));
+      case '1M':   return Math.max(1, Math.floor(count / 8));
+      case '3M':   return Math.max(1, Math.floor(count / 6));
+      case '6M':   return Math.max(1, Math.floor(count / 6));
+      case '1Y':   return Math.max(1, Math.floor(count / 12));
+      case 'ALL':  return Math.max(1, Math.floor(count / 10));
+      default:     return Math.max(1, Math.floor(count / 8));
+    }
+  };
+
   const getChartDateRange = () => {
     if (!chartData || chartData.length === 0) return '';
-    const first = new Date(chartData[0].timestamp);
-    const last = new Date(chartData[chartData.length - 1].timestamp);
-    const formatDate = (date: Date) =>
-      date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        ...(timeframe === '1Y' || timeframe === 'ALL' ? { year: '2-digit' } : {}),
-      });
-    return `${formatDate(first)} — ${formatDate(last)}`;
+    const first = formatChartDate(chartData[0].timestamp);
+    const last = formatChartDate(chartData[chartData.length - 1].timestamp);
+    return `${first} — ${last}`;
   };
 
   // Handle asset selection
@@ -453,26 +487,32 @@ useEffect(() => {
       setExporting(false);
     }
   };
- const handleOptimize = async () => {
-  setIsOptimizing(true);
-  setOptimizerResult(null);
-  try {
-    const data = await apiFetch('/api/portfolio/optimize', {
-      method: 'POST',
-      body: {
-        objective: optimizerObjective,
-        constraints: { minWeight: 0.02, maxWeight: 0.60 }
+  const handleOptimize = async () => {
+    setIsOptimizing(true);
+    setOptimizerResult(null);
+    setOptimizerStatus(`Optimizing your portfolio for ${optimizerObjective === 'sharpe' ? 'the best risk-adjusted return' : optimizerObjective === 'minvar' ? 'minimum volatility' : 'maximum return'}...`);
+    try {
+      const data = (await apiFetch('/api/portfolio/optimize', {
+        method: 'POST',
+        body: {
+          objective: optimizerObjective,
+          constraints: { minWeight: 0.02, maxWeight: 0.60 }
+        }
+      })) as { status?: string; data?: any; message?: string };
+      if (data?.status === 'success') {
+        setOptimizerResult(data.data);
+        setOptimizerStatus(data.data?.recommendation || data.message || 'Optimization completed successfully.');
+      } else {
+        setOptimizerStatus(data?.message || 'Optimization could not be completed.');
+        console.error('Optimizer error:', data?.message);
       }
-    });
-    if (data?.status === 'success') {
-      setOptimizerResult(data.data);
+    } catch (error) {
+      setOptimizerStatus(error instanceof Error ? error.message : 'Optimization could not be completed.');
+      console.error('Optimizer error:', error);
+    } finally {
+      setIsOptimizing(false);
     }
-  } catch (error) {
-    console.error('Optimizer error:', error);
-  } finally {
-    setIsOptimizing(false);
-  }
-};
+  };
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -716,8 +756,10 @@ useEffect(() => {
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={chartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                    <XAxis 
-                      dataKey="date" 
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={formatChartDate}
+                      interval={getChartXAxisInterval()}
                       stroke="#888"
                       style={{ fontSize: '12px' }}
                     />
@@ -744,6 +786,9 @@ useEffect(() => {
                           'Portfolio Value'
                         ];
                       }}
+                      labelFormatter={(ts) => new Date(ts).toLocaleDateString('en-US', {
+                        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+                      })}
                       labelStyle={{ color: '#fff' }}
                     />
                     <Legend />
@@ -882,6 +927,13 @@ useEffect(() => {
               </p>
             )}
 
+            {(isOptimizing || optimizerStatus) && (
+              <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${isOptimizing ? 'border-primary/30 bg-primary/10 text-primary' : 'border-dark-600 bg-dark-800/60 text-dark-300'}`}>
+                {isOptimizing ? 'Running portfolio optimization…' : 'Optimization status'}
+                <div className="mt-1 text-xs opacity-90">{optimizerStatus || 'Preparing your portfolio analysis…'}</div>
+              </div>
+            )}
+
             {optimizerResult && (
               <div className="mt-4">
                 {/* Metrics row */}
@@ -889,19 +941,25 @@ useEffect(() => {
                   <div className="bg-dark-800/50 rounded-lg p-4">
                     <p className="text-dark-400 text-sm">Expected Annual Return</p>
                     <p className="text-xl font-bold text-secondary">
-                      {optimizerResult.metrics?.expectedReturnAnnual?.toFixed(2)}%
+                      {getOptimizerMetric('expectedReturnAnnual', ['expectedReturn', 'returnAnnual', 'return']) === null
+                        ? '—'
+                        : `${getOptimizerMetric('expectedReturnAnnual', ['expectedReturn', 'returnAnnual', 'return'])?.toFixed(2)}%`}
                     </p>
                   </div>
                   <div className="bg-dark-800/50 rounded-lg p-4">
                     <p className="text-dark-400 text-sm">Annual Volatility</p>
                     <p className="text-xl font-bold text-amber-400">
-                      {optimizerResult.metrics?.volatilityAnnual?.toFixed(2)}%
+                      {getOptimizerMetric('volatilityAnnual', ['volatility', 'annualVolatility']) === null
+                        ? '—'
+                        : `${getOptimizerMetric('volatilityAnnual', ['volatility', 'annualVolatility'])?.toFixed(2)}%`}
                     </p>
                   </div>
                   <div className="bg-dark-800/50 rounded-lg p-4">
                     <p className="text-dark-400 text-sm">Sharpe Ratio</p>
                     <p className="text-xl font-bold text-primary">
-                      {optimizerResult.metrics?.sharpeRatio?.toFixed(2)}
+                      {getOptimizerMetric('sharpeRatio', ['sharpe']) === null
+                        ? '—'
+                        : getOptimizerMetric('sharpeRatio', ['sharpe'])?.toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -975,11 +1033,21 @@ useEffect(() => {
       />
 
       <PortfolioRebalance
-        portfolioId={portfolioIdRef.current || ''}
-        isOpen={isRebalanceModalOpen}
+        portfolioId={portfolioIdRef.current ?? ''}
+        isOpen={isRebalanceModalOpen && !!portfolioIdRef.current}
         onClose={() => setIsRebalanceModalOpen(false)}
         onRebalanced={fetchPortfolioData}
       />
+      {isRebalanceModalOpen && !portfolioIdRef.current && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-dark-800 rounded-xl p-6 border border-dark-700 max-w-sm w-full mx-4">
+            <p className="text-white text-center mb-4">Loading portfolio data, please wait...</p>
+            <button onClick={() => setIsRebalanceModalOpen(false)} className="btn-primary w-full">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
