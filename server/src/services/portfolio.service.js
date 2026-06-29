@@ -1269,6 +1269,172 @@ async addMultipleAssets(userId, assets) {
     }
     return { imported: imported.length, errors };
   }
+  /**
+   * Smart Rebalance Trigger
+   * Analyses portfolio drift (actual vs. equal-weight target) and volatility regime.
+   * Returns a scored recommendation with reasons.
+   *
+   * @param {string} userId
+   * @param {string} portfolioId
+   * @param {Object} [options]
+   * @param {number} [options.driftThreshold=0.05]     — abs drift before flagging (5%)
+   * @param {number} [options.scoreThreshold=60]       — composite score to trigger rebalance
+   * @param {number} [options.volatilityWindow=14]     — days for rolling volatility
+   * @returns {Promise<Object>}
+   */
+  async checkRebalanceTrigger(userId, portfolioId, options = {}) {
+    const {
+      driftThreshold   = 0.05,
+      scoreThreshold   = 60,
+      volatilityWindow = 14,
+    } = options;
+
+    try {
+      const portfolio = await Portfolio.findOne({ _id: portfolioId, userId });
+      if (!portfolio) throw new Error('Portfolio not found');
+
+      if (!portfolio.assets || portfolio.assets.length < 2) {
+        return {
+          shouldRebalance: false,
+          score: 0,
+          reasons: ['Portfolio needs at least 2 assets for rebalance analysis.'],
+          urgency: 'none',
+          driftDetails: [],
+          volatilityRegime: 'unknown',
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      // ── 1. Update current prices & metrics ────────────────────────────────
+      await this.updatePortfolioMetrics(portfolio);
+
+      const assets    = portfolio.assets;
+      const totalValue = portfolio.totalValue || 1;
+      const assetCount = assets.length;
+
+      // ── 2. Drift analysis (equal-weight target) ───────────────────────────
+      const targetWeight = 1 / assetCount;
+      const driftDetails = assets.map(asset => {
+        const actual    = (asset.value || 0) / totalValue;
+        const drift     = actual - targetWeight;
+        const absDrift  = Math.abs(drift);
+        return {
+          symbol:        asset.symbol,
+          actualWeight:  parseFloat((actual * 100).toFixed(2)),
+          targetWeight:  parseFloat((targetWeight * 100).toFixed(2)),
+          drift:         parseFloat((drift * 100).toFixed(2)),
+          absDrift:      parseFloat((absDrift * 100).toFixed(2)),
+          overweight:    drift > 0,
+          flagged:       absDrift > driftThreshold,
+        };
+      });
+
+      const maxAbsDrift   = Math.max(...driftDetails.map(d => d.absDrift / 100));
+      const avgAbsDrift   = driftDetails.reduce((s, d) => s + d.absDrift / 100, 0) / assetCount;
+      const flaggedCount  = driftDetails.filter(d => d.flagged).length;
+
+      // ── 3. Volatility regime (14-day rolling vol on BTC as market proxy) ──
+      let volatilityRegime = 'normal';
+      let volScore = 0;
+      try {
+        const today      = new Date();
+        const fromDate   = new Date(today.getTime() - (volatilityWindow + 5) * 24 * 60 * 60 * 1000);
+        const priceResp  = await marketService.getPriceHistory(
+          'BTC', '1d',
+          fromDate.toISOString().split('T')[0],
+          today.toISOString().split('T')[0]
+        );
+        const prices = (priceResp?.prices || [])
+          .slice(-volatilityWindow)
+          .map(p => parseFloat(p.close) || 0)
+          .filter(p => p > 0);
+
+        if (prices.length >= 7) {
+          const returns = [];
+          for (let i = 1; i < prices.length; i++) {
+            returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+          }
+          const avgRet = returns.reduce((s, r) => s + r, 0) / returns.length;
+          const variance = returns.reduce((s, r) => s + Math.pow(r - avgRet, 2), 0) / returns.length;
+          const vol = Math.sqrt(variance);
+
+          if (vol < 0.015)      { volatilityRegime = 'low';    volScore = 5;  }
+          else if (vol < 0.035) { volatilityRegime = 'normal'; volScore = 10; }
+          else if (vol < 0.06)  { volatilityRegime = 'high';   volScore = 25; }
+          else                  { volatilityRegime = 'extreme'; volScore = 40; }
+        }
+      } catch (e) {
+        logger.warn('[RebalanceTrigger] Volatility fetch failed, skipping:', e.message);
+      }
+
+      // ── 4. Time-since-last-rebalance bonus ────────────────────────────────
+      let staleScore = 0;
+      if (portfolio.lastRebalancedAt) {
+        const daysSince = (Date.now() - new Date(portfolio.lastRebalancedAt).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 90)      staleScore = 20;
+        else if (daysSince > 30) staleScore = 10;
+      } else {
+        staleScore = 15; // never rebalanced
+      }
+
+      // ── 5. Composite score ────────────────────────────────────────────────
+      //  Drift component (0-40): max drift maps linearly to 40 pts
+      const driftScore = Math.min(40, maxAbsDrift * 400);
+      //  Flags component (0-20): each flagged asset adds pts
+      const flagScore  = Math.min(20, flaggedCount * 7);
+      const score      = Math.round(driftScore + flagScore + volScore + staleScore);
+
+      // ── 6. Reasons ────────────────────────────────────────────────────────
+      const reasons = [];
+      if (maxAbsDrift > driftThreshold) {
+        const worst = driftDetails.sort((a, b) => b.absDrift - a.absDrift)[0];
+        reasons.push(
+          `${worst.symbol} has drifted ${worst.drift > 0 ? '+' : ''}${worst.drift.toFixed(1)}% from target (${worst.targetWeight.toFixed(1)}% → ${worst.actualWeight.toFixed(1)}%).`
+        );
+      }
+      if (flaggedCount > 1) reasons.push(`${flaggedCount} of ${assetCount} assets have drifted beyond the ${(driftThreshold * 100).toFixed(0)}% threshold.`);
+      if (volatilityRegime === 'high' || volatilityRegime === 'extreme') {
+        reasons.push(`Market volatility is ${volatilityRegime} — opportune time to lock in a balanced allocation.`);
+      }
+      if (volatilityRegime === 'low') {
+        reasons.push(`Volatility is low — ideal conditions to rebalance with minimal slippage.`);
+      }
+      if (staleScore >= 20) reasons.push('Portfolio has not been rebalanced in over 90 days.');
+      if (staleScore === 15) reasons.push('Portfolio has never been rebalanced.');
+
+      // ── 7. Urgency label ─────────────────────────────────────────────────
+      const urgency = score >= 80 ? 'high' : score >= scoreThreshold ? 'medium' : 'low';
+      const shouldRebalance = score >= scoreThreshold;
+
+      if (!shouldRebalance && reasons.length === 0) {
+        reasons.push('Portfolio allocations are within acceptable drift thresholds — no action needed.');
+      }
+
+      return {
+        shouldRebalance,
+        score,
+        scoreThreshold,
+        urgency,
+        reasons,
+        driftDetails,
+        volatilityRegime,
+        summary: {
+          maxDriftPct:    parseFloat((maxAbsDrift * 100).toFixed(2)),
+          avgDriftPct:    parseFloat((avgAbsDrift * 100).toFixed(2)),
+          flaggedAssets:  flaggedCount,
+          totalAssets:    assetCount,
+          daysSinceRebalance: portfolio.lastRebalancedAt
+            ? Math.round((Date.now() - new Date(portfolio.lastRebalancedAt).getTime()) / (1000 * 60 * 60 * 24))
+            : null,
+        },
+        lastChecked: new Date().toISOString(),
+      };
+
+    } catch (error) {
+      logger.error('[RebalanceTrigger] Error:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new PortfolioService();
