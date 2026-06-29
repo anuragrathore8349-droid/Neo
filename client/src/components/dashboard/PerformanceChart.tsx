@@ -1,3 +1,4 @@
+// client/src/components/dashboard/PerformanceChart.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import GlassCard from '../common/GlassCard';
@@ -12,7 +13,6 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
   const [timeframe, setTimeframe] = useState<'1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL'>('1M');
   const [chartData, setChartData] = useState<ChartData[]>(propData);
   const [loading, setLoading] = useState(false);
-  const prevTimeframeRef = useRef<string>('1M');
 
   const timeframes = [
     { label: '1D', value: '1D' },
@@ -23,7 +23,6 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
     { label: 'ALL', value: 'ALL' },
   ];
 
-  // When timeframe button is clicked, set loading and call parent
   const handleTimeframeClick = (tf: '1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL') => {
     if (tf === timeframe) return;
     setTimeframe(tf);
@@ -33,7 +32,6 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
     }
   };
 
-  // When parent sends new data (after fetch), update chart and clear loading
   useEffect(() => {
     if (propData && propData.length > 0) {
       setChartData(propData);
@@ -41,15 +39,49 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
     }
   }, [propData]);
 
+  // ✅ FIX: Correct date format per timeframe
   const formatXAxis = (timestamp: number) => {
     const date = new Date(timestamp);
-    if (timeframe === '1D') {
-      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    } else if (timeframe === '1W') {
-      return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    } else {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    switch (timeframe) {
+      case '1D':
+        // Show hours:minutes for intraday
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      case '1W':
+        // Show weekday + time for weekly
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      case '1M':
+      case '3M':
+        // Show month + day
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      case '1Y':
+      case 'ALL':
+        // Show month + year for long periods
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      default:
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
+  };
+
+  // ✅ FIX: Correct tick interval per timeframe so labels don't pile up
+  const getXAxisInterval = () => {
+    const count = chartData?.length || 0;
+    switch (timeframe) {
+      case '1D':   return Math.max(1, Math.floor(count / 6));   // ~6 hourly ticks
+      case '1W':   return Math.max(1, Math.floor(count / 7));   // 1 per day
+      case '1M':   return Math.max(1, Math.floor(count / 8));   // ~4 per week
+      case '3M':   return Math.max(1, Math.floor(count / 6));   // 2 per month
+      case '1Y':   return Math.max(1, Math.floor(count / 12));  // 1 per month
+      case 'ALL':  return Math.max(1, Math.floor(count / 10));  // spread across range
+      default:     return 'preserveStartEnd';
+    }
+  };
+
+  const formatTooltipLabel = (timestamp: number) => {
+    const date = new Date(timestamp);
+    if (timeframe === '1D') {
+      return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   };
 
   const formatValue = (value: number) => {
@@ -65,7 +97,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
     if (active && payload && payload.length) {
       return (
         <div className="bg-dark-800 p-3 rounded-lg border border-dark-700 shadow-lg">
-          <p className="font-medium text-sm text-dark-300">{formatXAxis(label)}</p>
+          <p className="font-medium text-sm text-dark-300">{formatTooltipLabel(label)}</p>
           <p className="text-primary font-semibold">{formatValue(payload[0].value)}</p>
         </div>
       );
@@ -127,7 +159,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ data: propData, onT
                 tick={{ fill: '#7C8B9B', fontSize: 11 }}
                 axisLine={{ stroke: '#323B4E' }}
                 tickLine={{ stroke: '#323B4E' }}
-                interval="preserveStartEnd"
+                interval={getXAxisInterval()}   // ✅ dynamic interval
               />
               <YAxis
                 tickFormatter={(value) => `$${value >= 1000 ? (value / 1000).toFixed(1) + 'k' : value}`}
