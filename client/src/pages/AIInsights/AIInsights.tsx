@@ -5,8 +5,10 @@ import SentimentCard from '../../components/ai/SentimentCard/SentimentCard';
 import PredictionCard from '../../components/ai/PredictionCard/PredictionCard';
 import StrategyCard from '../../components/ai/StrategyCard/StrategyCard';
 import MarketInsightCard from '../../components/ai/MarketInsightCard/MarketInsightCard';
+import PortfolioChat from '../../components/ai/PortfolioChat/PortfolioChat';
 import { usePlan } from '../../context/PlanContext';
 import UpgradeWall from '../../components/common/UpgradeWall/UpgradeWall';
+
 
 import {
   Brain, Target, TrendingUp, AlertTriangle, Lightbulb,
@@ -916,6 +918,8 @@ const AIInsights: React.FC = () => {
             </div>
           </div>
         )}
+
+        <PortfolioChat />
       </div>
     </div>
   );
