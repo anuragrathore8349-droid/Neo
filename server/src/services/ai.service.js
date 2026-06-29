@@ -1774,6 +1774,123 @@ class AIService {
   aggregateNewsSentiment() {
     return 'neutral';
   }
+
+  /**
+   * Portfolio Chat — Gemini AI with full portfolio + live market context
+   *
+   * @param {string} userId
+   * @param {string} message
+   * @param {Array<{role:string, text:string}>} history
+   * @returns {Promise<{reply:string, portfolioContext:Object, source:string}>}
+   */
+  async portfolioChat(userId, message, history = []) {
+    try {
+      logger.debug(`[PortfolioChat] userId=${userId} message="${message.slice(0, 60)}"`);
+
+      const { callGeminiPortfolioChat } = require('../utils/openai-integration');
+      const portfolioService = require('./portfolio.service');
+
+      // ── 1. Fetch real portfolio data ──────────────────────────────────────
+      const [summary, assetsResult] = await Promise.allSettled([
+        portfolioService.getPortfolioSummary(userId),
+        portfolioService.getAllAssets(userId),
+      ]);
+
+      const portfolioSummary = summary.status === 'fulfilled' ? summary.value : {};
+      const assets = assetsResult.status === 'fulfilled'
+        ? (assetsResult.value?.items || assetsResult.value || [])
+        : [];
+
+      // ── 2. Fetch live prices for every held asset ─────────────────────────
+      const symbols = [...new Set(assets.map(a => a.symbol).filter(Boolean))];
+      let marketPrices = {};
+      if (symbols.length > 0) {
+        try {
+          marketPrices = await marketService.getLivePrices(symbols);
+        } catch (e) {
+          logger.warn('[PortfolioChat] Live prices fetch failed:', e.message);
+        }
+      }
+
+      // ── 3. Build portfolio context ────────────────────────────────────────
+      const portfolioContext = {
+        totalValue: portfolioSummary.totalValue || 0,
+        totalCost: portfolioSummary.totalCost || 0,
+        totalPL: portfolioSummary.totalProfitLoss || portfolioSummary.totalPL || 0,
+        totalPLPercentage: portfolioSummary.totalPLPercentage || 0,
+        assets,
+      };
+
+      // ── 4. Call Gemini ────────────────────────────────────────────────────
+      const geminiReply = await callGeminiPortfolioChat(message, history, portfolioContext, marketPrices);
+
+      if (geminiReply) {
+        return {
+          reply: geminiReply,
+          portfolioContext: {
+            totalValue: portfolioContext.totalValue,
+            assetCount: assets.length,
+            symbols,
+          },
+          source: 'gemini_2.5_flash',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      // ── 5. Fallback: rule-based response if Gemini unavailable ────────────
+      const fallbackReply = this._portfolioChatFallback(message, portfolioContext, marketPrices);
+      return {
+        reply: fallbackReply,
+        portfolioContext: {
+          totalValue: portfolioContext.totalValue,
+          assetCount: assets.length,
+          symbols,
+        },
+        source: 'statistical_fallback',
+        timestamp: new Date().toISOString(),
+      };
+
+    } catch (error) {
+      logger.error('[PortfolioChat] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Rule-based fallback reply when Gemini is unavailable
+   * @private
+   */
+  _portfolioChatFallback(message, portfolioContext, marketPrices) {
+    const msg = message.toLowerCase();
+    const { totalValue = 0, totalPL = 0, totalPLPercentage = 0, assets = [] } = portfolioContext;
+
+    if (msg.includes('worth') || msg.includes('value') || msg.includes('total')) {
+      return `Your portfolio is currently valued at $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ` +
+        `across ${assets.length} asset(s). ` +
+        `Overall P&L: ${totalPL >= 0 ? '+' : ''}$${totalPL.toFixed(2)} (${totalPLPercentage.toFixed(2)}%). ` +
+        `\n\n*Note: Set GEMINI_API_KEY in server/.env for personalised AI analysis.*`;
+    }
+
+    if (msg.includes('best') || msg.includes('top') || msg.includes('perform')) {
+      const sorted = [...assets].sort((a, b) => (b.profitLossPercentage || 0) - (a.profitLossPercentage || 0));
+      const top = sorted.slice(0, 3).map(a => `${a.symbol} (${(a.profitLossPercentage || 0).toFixed(2)}%)`).join(', ');
+      return `Your best performing assets are: ${top || 'none yet'}. ` +
+        `\n\n*Set GEMINI_API_KEY for full AI-powered analysis.*`;
+    }
+
+    if (msg.includes('risk') || msg.includes('safe') || msg.includes('diversif')) {
+      const cryptoCount = assets.filter(a => a.type === 'crypto').length;
+      const stockCount = assets.filter(a => a.type === 'stock').length;
+      return `Your portfolio contains ${cryptoCount} crypto and ${stockCount} stock position(s). ` +
+        `${cryptoCount > stockCount * 2 ? 'You appear crypto-heavy — consider adding equities for diversification.' : 'Your mix looks reasonably balanced.'} ` +
+        `\n\n*Set GEMINI_API_KEY for AI-powered risk analysis.*`;
+    }
+
+    return `I can see your portfolio is worth $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ` +
+      `with ${assets.length} holding(s). ` +
+      `To get full AI-powered answers about your specific situation, add GEMINI_API_KEY to server/.env. ` +
+      `\n\nIn the meantime, ask me about your portfolio value, best performers, or risk exposure.`;
+  }
 }
 
 module.exports = new AIService();
