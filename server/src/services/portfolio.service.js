@@ -749,6 +749,17 @@ return portfolio;
  */
 async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = false) {
   try {
+    const objectiveMap = {
+      'min-volatility': 'minvar',
+      minvar: 'minvar',
+      maxreturn: 'maxreturn',
+      'max-return': 'maxreturn',
+      return: 'maxreturn',
+      risk: 'minvar',
+      sharpe: 'sharpe'
+    };
+    objective = objectiveMap[objective] || objective || 'sharpe';
+
     const portfolio = await Portfolio.findOne({ _id: portfolioId, userId });
     if (!portfolio) {
       throw new Error('Portfolio not found');
@@ -789,6 +800,7 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
       // Return recommendation without applying changes
       return {
         status: 'preview',
+        message: `Preview generated using the ${objective} objective to rebalance your portfolio.`,
         currentAllocation: optimization.currentAllocation,
         recommendedAllocation: optimization.recommendedAllocation,
         expectedMetrics: optimization.expectedMetrics,
@@ -855,7 +867,7 @@ async rebalancePortfolio(userId, portfolioId, objective = 'sharpe', dryRun = fal
 
     return {
       status: 'success',
-      message: 'Portfolio rebalanced successfully',
+      message: `Portfolio rebalanced successfully using the ${objective} objective.`,
       currentAllocation: optimization.currentAllocation,
       recommendedAllocation: optimization.recommendedAllocation,
       expectedMetrics: optimization.expectedMetrics,
