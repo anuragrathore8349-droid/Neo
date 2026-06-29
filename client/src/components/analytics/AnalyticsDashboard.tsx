@@ -86,6 +86,25 @@ const AnalyticsDashboard: React.FC<Props> = ({ data: propData, timeframe, onRefr
   const [isReporting,     setIsReporting]     = useState(false);
 
   // ── Helper: map raw performance API data → chart points ───────────────────
+  // ✅ FIX: Format date labels based on selected timeframe
+  const getDateLabel = useCallback((dateInput: string | number | undefined, index: number): string => {
+    if (!dateInput) return `Period ${index + 1}`;
+    const date = new Date(dateInput);
+    switch (timeframe) {
+      case '1w':
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      case '1m':
+      case '3m':
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      case '6m':
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      case '1y':
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      default:
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  }, [timeframe]);
+
   const mapPerformance = useCallback((perf: any, bench: any): PerformancePoint[] => {
     if (!perf?.metrics?.returns || !Array.isArray(perf.metrics.returns)) return [];
 
@@ -93,21 +112,19 @@ const AnalyticsDashboard: React.FC<Props> = ({ data: propData, timeframe, onRefr
     const benchMap: Record<string, number> = {};
     if (bench?.benchmark && Array.isArray(bench.benchmark)) {
       bench.benchmark.forEach((b: any) => {
-        const label = b.date
-          ? new Date(b.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : '';
+        const label = b.date ? getDateLabel(b.date, 0) : '';
         if (label) benchMap[label] = b.value || 0;
       });
     }
 
     const formatted: PerformancePoint[] = perf.metrics.returns.map((r: any, i: number) => {
-      const label = r.label || (r.date
-        ? new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        : `Period ${i + 1}`);
+      // ✅ FIX: use timeframe-aware label
+      const label = r.label
+        ? (r.date ? getDateLabel(r.date, i) : r.label)
+        : getDateLabel(r.date, i);
       return {
         month: label,
         portfolio: r.value || 0,
-        // Use real benchmark value if available, otherwise fall back to 0 (not faked 0.9)
         benchmark: benchMap[label] ?? 0,
       };
     });
@@ -121,7 +138,7 @@ const AnalyticsDashboard: React.FC<Props> = ({ data: propData, timeframe, onRefr
         benchmarkReturn:  prev.benchmark  ? ((item.benchmark  - prev.benchmark)  / prev.benchmark)  * 100 : 0,
       };
     });
-  }, []);
+  }, [getDateLabel]);
 
   // ── Map incoming prop data ─────────────────────────────────────────────────
   useEffect(() => {
@@ -162,7 +179,7 @@ const AnalyticsDashboard: React.FC<Props> = ({ data: propData, timeframe, onRefr
     } catch (err) {
       console.error('Failed to map analytics prop data:', err);
     }
-  }, [propData, mapPerformance]);
+  }, [propData, mapPerformance, getDateLabel]);
 
   // ── Fetch opportunities independently (not in parent because it's not timeframe-dependent) ──
   useEffect(() => {
