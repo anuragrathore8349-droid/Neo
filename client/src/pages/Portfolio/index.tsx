@@ -35,6 +35,7 @@ import TransactionHistory from '../../components/Portfolio/TransactionHistory';
 import AddAssetModal from '../../components/Portfolio/AddAssetModal';
 import CSVImportModal from '../../components/Portfolio/CSVImportModal';
 import PortfolioRebalance from '../../components/Portfolio/PortfolioRebalance';
+import RebalanceAlert from '../../components/Portfolio/RebalanceAlert/RebalanceAlert';
 
 interface PortfolioProps {
   assets?: PortfolioAsset[];
@@ -560,6 +561,10 @@ useEffect(() => {
         </div>
       </div>
       
+      <div className="mb-6">
+        <RebalanceAlert portfolioId={portfolioIdRef.current || ''} className="mb-4" />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
         <GlassCard className="p-6" gradient>
           <div className="flex justify-between items-start">
