@@ -55,5 +55,7 @@ router.post('/import',
 // ── Rebalance (AI-powered, per portfolio) — THIS IS WHAT THE CLIENT CALLS ──
 router.post('/optimize', portfolioController.optimizePortfolio);
 router.post('/:portfolioId/rebalance', portfolioController.rebalancePortfolio);
+// Smart rebalance trigger check
+router.get('/:portfolioId/rebalance-check', portfolioController.checkRebalanceTrigger);
 
 module.exports = router;
