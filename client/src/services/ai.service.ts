@@ -207,6 +207,27 @@ class AIService {
       throw error;
     }
   }
+
+  async portfolioChat(
+    message: string,
+    history: Array<{ role: 'user' | 'assistant'; text: string }> = []
+  ): Promise<{
+    reply: string;
+    portfolioContext: { totalValue: number; assetCount: number; symbols: string[] };
+    source: string;
+    timestamp: string;
+  }> {
+    try {
+      const response = await apiFetch<{ data: any }>(
+        '/api/ai/chat',
+        { method: 'POST', body: { message, history } }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error in portfolio chat:', error);
+      throw error;
+    }
+  }
 }
 
 export default new AIService();
