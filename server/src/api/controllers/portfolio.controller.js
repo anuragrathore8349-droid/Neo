@@ -95,6 +95,23 @@ class PortfolioController {
     }
   }
 
+  async checkRebalanceTrigger(req, res, next) {
+    try {
+      const userId = req.user?.userId || req.user?.id;
+      const portfolioId = req.params.portfolioId;
+      const { driftThreshold, scoreThreshold } = req.query;
+
+      const options = {};
+      if (driftThreshold) options.driftThreshold = parseFloat(driftThreshold);
+      if (scoreThreshold) options.scoreThreshold = parseFloat(scoreThreshold);
+
+      const result = await portfolioService.checkRebalanceTrigger(userId, portfolioId, options);
+      res.json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async optimizePortfolio(req, res, next) {
     try {
       const { objective = 'sharpe', constraints = {} } = req.body || {};
