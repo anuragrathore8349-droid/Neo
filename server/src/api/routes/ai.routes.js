@@ -68,6 +68,12 @@ router.post('/anomalies',
 // Personalized AI insights
 router.get('/insights', aiController.getPersonalizedInsights);
 
+// Portfolio Chat (Gemini + live portfolio context)
+router.post('/chat',
+  validateRequest(aiSchemas.portfolioChat),
+  aiController.portfolioChat
+);
+
 // Market data helpers
 router.get('/fear-greed', aiController.getFearGreedIndex);
 router.get('/market/dominance', aiController.getBTCDominance);
