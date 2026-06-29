@@ -53,6 +53,7 @@ router.post('/import',
   portfolioController.importTransactionsCSV);
 
 // ── Rebalance (AI-powered, per portfolio) — THIS IS WHAT THE CLIENT CALLS ──
+router.post('/optimize', portfolioController.optimizePortfolio);
 router.post('/:portfolioId/rebalance', portfolioController.rebalancePortfolio);
 
 module.exports = router;
