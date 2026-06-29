@@ -23,10 +23,40 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const metrics = previewData?.expectedMetrics ?? {};
-  const formatMetric = (value: number | undefined, suffix = '') => {
-    if (typeof value !== 'number' || Number.isNaN(value)) return 'N/A';
-    return `${value.toFixed(2)}${suffix}`;
+  const rawMetrics = previewData?.expectedMetrics ?? ((previewData as RebalanceResult & { metrics?: Record<string, number | string> })?.metrics) ?? {};
+  const metrics = rawMetrics as Record<string, number | string | undefined>;
+  const parseMetricValue = (value: number | string | undefined): number | undefined => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value.replace('%', ''));
+      return Number.isNaN(parsed) ? undefined : parsed;
+    }
+    return undefined;
+  };
+  const formatMetric = (value: number | string | undefined, suffix = '') => {
+    const parsed = parseMetricValue(value);
+    if (typeof parsed !== 'number' || Number.isNaN(parsed)) return 'N/A';
+    return `${parsed.toFixed(2)}${suffix}`;
+  };
+  const tradesFromResponse = previewData?.trades ?? [];
+  const rebalancingSource = (previewData as unknown as { rebalancing?: Array<{ symbol: string; current?: string; recommended?: string }> })?.rebalancing ?? [];
+  const trades = tradesFromResponse.length > 0
+    ? tradesFromResponse
+    : rebalancingSource.map((item) => ({
+        symbol: item.symbol,
+        name: item.symbol,
+        currentAmount: 0,
+        currentValue: 0,
+        currentAllocation: item.current ?? '0.00',
+        recommendedAllocation: item.recommended ?? '0.00',
+        differencePercent: '0.00',
+        tradeValue: '0.00',
+        action: 'HOLD' as 'BUY' | 'SELL' | 'HOLD'
+      }));
+  const displayedMetrics = {
+    sharpe: metrics.sharpe ?? metrics.sharpeRatio,
+    volatility: metrics.volatility ?? metrics.volatilityAnnual,
+    maxDrawdown: metrics.maxDrawdown ?? metrics.estimatedMaxDrawdown
   };
 
   const objectives = [
@@ -53,6 +83,8 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
   const handleGetPreview = async () => {
     setLoading(true);
     setError(null);
+    setStatusMessage(null);
+    setPreviewData(null);
     if (!portfolioId) {
       setError('Portfolio not loaded yet. Please refresh the page and try again.');
       setLoading(false);
@@ -149,7 +181,13 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                   {objectives.map((obj) => (
                     <button
                       key={obj.value}
-                      onClick={() => setObjective(obj.value)}
+                      onClick={() => {
+                        setObjective(obj.value);
+                        setPreviewData(null);
+                        setStatusMessage(null);
+                        setError(null);
+                        setStep('select');
+                      }}
                       className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
                         objective === obj.value
                           ? 'border-primary bg-primary/10'
@@ -195,19 +233,19 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                     <div>
                       <p className="text-dark-400 text-sm">Sharpe Ratio</p>
                       <p className="text-lg font-bold text-primary">
-                        {formatMetric(metrics.sharpe)}
+                        {formatMetric(displayedMetrics.sharpe)}
                       </p>
                     </div>
                     <div>
                       <p className="text-dark-400 text-sm">Volatility</p>
                       <p className="text-lg font-bold text-yellow-400">
-                        {formatMetric(metrics.volatility, '%')}
+                        {formatMetric(displayedMetrics.volatility, '%')}
                       </p>
                     </div>
                     <div>
                       <p className="text-dark-400 text-sm">Max Drawdown</p>
                       <p className="text-lg font-bold text-red-400">
-                        {formatMetric(metrics.maxDrawdown, '%')}
+                        {formatMetric(displayedMetrics.maxDrawdown, '%')}
                       </p>
                     </div>
                   </div>
@@ -217,8 +255,8 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                 <div className="space-y-3">
                   <h3 className="font-semibold text-white">Recommended Trades</h3>
                   <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {(previewData.trades ?? []).length > 0 ? (
-                      (previewData.trades ?? []).map((trade) => (
+                    {trades.length > 0 ? (
+                      trades.map((trade) => (
                         <div
                           key={trade.symbol}
                           className="bg-dark-700/50 p-3 rounded-lg flex items-center justify-between"
@@ -292,7 +330,7 @@ const PortfolioRebalance: React.FC<PortfolioRebalanceProps> = ({
                 </p>
 
                 <p className="text-dark-300">
-                  <strong>Trades to Execute:</strong> {previewData.trades.filter(t => t.action !== 'HOLD').length}
+                  <strong>Trades to Execute:</strong> {trades.filter(t => t.action !== 'HOLD').length}
                 </p>
 
                 {statusMessage && !error && (
