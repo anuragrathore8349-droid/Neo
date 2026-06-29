@@ -351,14 +351,33 @@ class AIService {
         objective
       );
 
+      const allocationMap = optimization.allocationMap || (Array.isArray(optimization.allocation)
+        ? optimization.allocation.reduce((map, item) => {
+            let raw = item.weight ?? item.allocation ?? item.allocationPercentage ?? 0;
+            if (typeof raw === 'string') {
+              raw = parseFloat(raw.replace('%', '')) || 0;
+            }
+            const weight = typeof raw === 'number' ? raw / 100 : 0;
+            map[item.symbol] = Math.max(0, Math.min(1, weight));
+            return map;
+          }, {})
+        : typeof optimization.allocation === 'object' && optimization.allocation !== null
+          ? Object.fromEntries(Object.entries(optimization.allocation).map(([symbol, rawValue]) => {
+              let raw = rawValue;
+              if (typeof raw === 'string') {
+                raw = parseFloat(raw.replace('%', '')) || 0;
+              }
+              const weight = typeof raw === 'number' ? raw / 100 : 0;
+              return [symbol, Math.max(0, Math.min(1, weight))];
+            }))
+          : {});
+
       return {
         currentAllocation: this.calculateCurrentAllocation(assets),
         recommendedAllocation: optimization.allocation,
-        expectedMetrics: optimization.metrics,
-        rebalancing: this.calculateRebalancing(
-          assets,
-          optimization.allocation
-        ),
+        allocationMap,
+        expectedMetrics: optimization.metrics || optimization.expectedMetrics || {},
+        rebalancing: this.calculateRebalancing(assets, allocationMap),
         objective,
         lastUpdated: new Date().toISOString()
       };
@@ -807,23 +826,35 @@ class AIService {
    * Calculate current allocation
    */
   calculateCurrentAllocation(assets) {
-    const total = assets.reduce((sum, a) => sum + a.amount, 0);
-    return assets.map(a => ({
-      symbol: a.symbol,
-      allocation: (a.amount / total * 100).toFixed(2) + '%'
-    }));
+    const totalValue = assets.reduce((sum, a) => sum + (a.value || (a.currentPrice || 0) * (a.currentAmount || 0)), 0);
+    return assets.map(a => {
+      const assetValue = a.value || (a.currentPrice || 0) * (a.currentAmount || a.amount || 0);
+      return {
+        symbol: a.symbol,
+        allocation: totalValue > 0 ? ((assetValue / totalValue) * 100).toFixed(2) + '%' : '0.00%'
+      };
+    });
   }
 
   /**
    * Calculate rebalancing actions
    */
   calculateRebalancing(assets, recommendedAllocation) {
-    return assets.map((asset, idx) => ({
-      symbol: asset.symbol,
-      current: this.calculateCurrentAllocation(assets)[idx].allocation,
-      recommended: recommendedAllocation[idx]?.allocation,
-      action: 'Gradual adjustment recommended'
-    }));
+    const currentAllocations = this.calculateCurrentAllocation(assets);
+    return assets.map((asset, idx) => {
+      let recommended = '0.00%';
+      if (Array.isArray(recommendedAllocation)) {
+        recommended = recommendedAllocation[idx]?.allocation || '0.00%';
+      } else if (recommendedAllocation && typeof recommendedAllocation === 'object') {
+        recommended = recommendedAllocation[asset.symbol] || recommendedAllocation[asset.symbol?.toUpperCase()] || '0.00%';
+      }
+      return {
+        symbol: asset.symbol,
+        current: currentAllocations[idx]?.allocation || '0.00%',
+        recommended,
+        action: 'Gradual adjustment recommended'
+      };
+    });
   }
 
   /**
