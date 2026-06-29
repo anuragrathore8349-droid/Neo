@@ -35,7 +35,7 @@ class LearningController {
       logger.debug(`Retrieved ${articles.length} articles`);
       
       res.json({
-        success: true,
+        status: 'success',
         data: articles,
         pagination: {
           total,
@@ -59,10 +59,10 @@ class LearningController {
       ).lean();
 
       if (!article) {
-        return res.status(404).json({ success: false, message: 'Article not found' });
+        return res.status(404).json({ status: 'error', message: 'Article not found' });
       }
 
-      res.json({ success: true, data: article });
+      res.json({ status: 'success', data: article });
     } catch (error) {
       logger.error('Error fetching article:', error);
       next(error);
@@ -86,7 +86,7 @@ class LearningController {
       });
 
       await article.save();
-      res.status(201).json({ success: true, data: article });
+      res.status(201).json({ status: 'success', data: article });
     } catch (error) {
       logger.error('Error creating article:', error);
       next(error);
@@ -123,7 +123,7 @@ class LearningController {
       }
 
       res.json({
-        success: true,
+        status: 'success',
         data: videos,
         pagination: {
           total,
@@ -147,10 +147,10 @@ class LearningController {
       ).lean();
 
       if (!video) {
-        return res.status(404).json({ success: false, message: 'Video not found' });
+        return res.status(404).json({ status: 'error', message: 'Video not found' });
       }
 
-      res.json({ success: true, data: video });
+      res.json({ status: 'success', data: video });
     } catch (error) {
       logger.error('Error fetching video:', error);
       next(error);
@@ -174,7 +174,7 @@ class LearningController {
       });
 
       await video.save();
-      res.status(201).json({ success: true, data: video });
+      res.status(201).json({ status: 'success', data: video });
     } catch (error) {
       logger.error('Error creating video:', error);
       next(error);
@@ -204,7 +204,7 @@ class LearningController {
       const total = await GlossaryTerm.countDocuments(query);
 
       res.json({
-        success: true,
+        status: 'success',
         data: terms,
         pagination: {
           total,
@@ -224,10 +224,10 @@ class LearningController {
       const term = await GlossaryTerm.findById(id).lean();
 
       if (!term) {
-        return res.status(404).json({ success: false, message: 'Glossary term not found' });
+        return res.status(404).json({ status: 'error', message: 'Glossary term not found' });
       }
 
-      res.json({ success: true, data: term });
+      res.json({ status: 'success', data: term });
     } catch (error) {
       logger.error('Error fetching glossary term:', error);
       next(error);
@@ -239,7 +239,7 @@ class LearningController {
       const { q } = req.query;
 
       if (!q || q.length < 2) {
-        return res.status(400).json({ success: false, message: 'Search query must be at least 2 characters' });
+        return res.status(400).json({ status: 'error', message: 'Search query must be at least 2 characters' });
       }
 
       const terms = await GlossaryTerm.find({
@@ -250,7 +250,7 @@ class LearningController {
         ]
       }).limit(10).lean();
 
-      res.json({ success: true, data: terms });
+      res.json({ status: 'success', data: terms });
     } catch (error) {
       logger.error('Error searching glossary:', error);
       next(error);
@@ -272,7 +272,7 @@ class LearningController {
       });
 
       await glossaryTerm.save();
-      res.status(201).json({ success: true, data: glossaryTerm });
+      res.status(201).json({ status: 'success', data: glossaryTerm });
     } catch (error) {
       logger.error('Error creating glossary term:', error);
       next(error);
@@ -303,7 +303,7 @@ class LearningController {
       const total = await Guide.countDocuments(query);
 
       res.json({
-        success: true,
+        status: 'success',
         data: guides,
         pagination: {
           total,
@@ -323,10 +323,10 @@ class LearningController {
       const guide = await Guide.findById(id).lean();
 
       if (!guide) {
-        return res.status(404).json({ success: false, message: 'Guide not found' });
+        return res.status(404).json({ status: 'error', message: 'Guide not found' });
       }
 
-      res.json({ success: true, data: guide });
+      res.json({ status: 'success', data: guide });
     } catch (error) {
       logger.error('Error fetching guide:', error);
       next(error);
@@ -350,7 +350,7 @@ class LearningController {
       });
 
       await guide.save();
-      res.status(201).json({ success: true, data: guide });
+      res.status(201).json({ status: 'success', data: guide });
     } catch (error) {
       logger.error('Error creating guide:', error);
       next(error);
@@ -372,7 +372,7 @@ class LearningController {
         }
       };
 
-      res.json({ success: true, data: stats });
+      res.json({ status: 'success', data: stats });
     } catch (error) {
       logger.error('Error fetching content stats:', error);
       next(error);
@@ -387,7 +387,7 @@ class LearningController {
         guides: await Guide.find().sort({ rating: { average: -1 } }).limit(2).lean()
       };
 
-      res.json({ success: true, data: featured });
+      res.json({ status: 'success', data: featured });
     } catch (error) {
       logger.error('Error fetching featured content:', error);
       next(error);
@@ -401,7 +401,7 @@ class LearningController {
       const results = await externalContentService.syncExternalContent();
 
       res.json({
-        success: true,
+        status: 'success',
         message: 'External content synced successfully',
         data: results
       });
@@ -419,7 +419,7 @@ class LearningController {
       externalContentService.schedulePeriodicSync(intervalHours);
 
       res.json({
-        success: true,
+        status: 'success',
         message: `Periodic sync started with interval of ${intervalHours} hours`,
         interval: intervalHours
       });
@@ -435,7 +435,7 @@ class LearningController {
       const { symbol } = req.query;
       const learningService = require('../../services/learning.service');
       const news = await learningService.getLiveNews(symbol || null);
-      res.json({ success: true, data: news });
+      res.json({ status: 'success', data: news });
     } catch (error) {
       logger.error('Error fetching live news:', error);
       next(error);
