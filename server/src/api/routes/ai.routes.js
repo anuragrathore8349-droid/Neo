@@ -80,4 +80,20 @@ router.get('/market/dominance', aiController.getBTCDominance);
 router.get('/trending-coins', aiController.getTrendingCoins);
 router.get('/market/overview', aiController.getMarketOverview);
 
+// ── Tax-Loss Harvesting Engine (deterministic + optional Gemini polish) ──
+router.get('/tax-loss-harvesting',
+  validateRequest(aiSchemas.getTaxLossHarvesting),
+  aiController.getTaxLossHarvesting
+);
+
+// ── AI Weekly Report data (client renders PDF via jsPDF) ────────────────
+router.get('/weekly-report',
+  featureAccess('weeklyAIReport'),
+  validateRequest(aiSchemas.getWeeklyReport),
+  aiController.getWeeklyReport
+);
+
+// ── Gemini quota/health status (powers an "AI status" badge in the UI) ──
+router.get('/quota-status', aiController.getAIQuotaStatus);
+
 module.exports = router;
