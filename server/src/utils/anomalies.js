@@ -1,5 +1,24 @@
 const { logger } = require('../api/middlewares/logger.middleware');
-const { getOpenAIInsights, getBasicExplanation } = require('./openai-integration');
+const { getBasicExplanation, callGeminiBatch } = require('./openai-integration');
+
+// ─── AI ENRICHMENT COOLDOWN ───────────────────────────────────────────────────
+// ROOT CAUSE FIX: this module used to call getOpenAIInsights() for EVERY
+// anomaly on EVERY job cycle (market job runs every 10s). With several
+// symbols flagged per cycle, that alone could burn the entire 1500/day
+// Gemini free-tier quota in under 2 hours. We now only request a fresh AI
+// explanation for a given symbol+type once per COOLDOWN_MS window; outside
+// that window we reuse the deterministic statistical explanation, which is
+// still accurate (z-score based) and costs nothing.
+const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes per symbol+anomaly-type
+const lastEnrichedAt = new Map(); // key: `${symbol}:${type}` -> timestamp
+
+function shouldEnrichWithAI(symbol, type) {
+  const key = `${symbol}:${type}`;
+  const last = lastEnrichedAt.get(key) || 0;
+  if (Date.now() - last < COOLDOWN_MS) return false;
+  lastEnrichedAt.set(key, Date.now());
+  return true;
+}
 
 /**
  * Detects statistical anomalies in financial data using z-score method
@@ -222,54 +241,40 @@ const getConfidenceLevel = (absZScore) => {
  * Explains why anomalies occurred in financial context
  * Graceful fallback if OpenAI unavailable
  */
+/**
+ * FIX: this used to be `Promise.all(anomalies.map(async a => getOpenAIInsights(a)))`
+ * — ONE Gemini request PER anomaly. A single scan with 10-15 anomalies burned
+ * 10-15 requests from the (small) daily free-tier quota in one job run, which
+ * is the main reason "rate limit exceeded" showed up after only a handful of
+ * scans. Now the whole batch is explained in a SINGLE Gemini call.
+ */
 const enrichAnomaliesWithInsights = async (anomalies) => {
   if (!anomalies || anomalies.length === 0) {
     return [];
   }
 
   try {
-    const enriched = await Promise.all(
-      anomalies.map(async (anomaly) => {
-        try {
-          // Attempt to get AI insights
-          const insight = await getOpenAIInsights({
-            symbol: anomaly.symbol,
-            value: anomaly.value,
-            mean: anomaly.mean,
-            stdDev: anomaly.stdDev,
-            zScore: anomaly.zScore,
-            type: anomaly.type,
-            severity: anomaly.severity
-          });
+    const describe = (a) =>
+      `${a.symbol} ${a.type} anomaly, z-score ${a.zScore} (mean ${a.mean}, value ${a.value})`;
 
-          return {
-            ...anomaly,
-            explanation: insight,
-            enriched: true,
-            enrichmentMethod: 'openai'
-          };
-        } catch (error) {
-          // Fallback to basic explanation
-          logger.debug(`OpenAI enrichment failed for ${anomaly.symbol}, using fallback`);
-          return {
-            ...anomaly,
-            explanation: getBasicExplanation(anomaly),
-            enriched: false,
-            enrichmentMethod: 'fallback',
-            enrichmentError: error.message
-          };
-        }
-      })
-    );
+    const explanations = await callGeminiBatch(anomalies, describe);
 
-    return enriched;
+    return anomalies.map((anomaly, i) => {
+      const aiExplanation = explanations?.[i];
+      return {
+        ...anomaly,
+        explanation: aiExplanation || getBasicExplanation(anomaly),
+        enriched: Boolean(aiExplanation),
+        enrichmentMethod: aiExplanation ? 'gemini_batch' : 'fallback',
+      };
+    });
   } catch (error) {
     logger.error('Error enriching anomalies:', error);
-    // Return unencriched anomalies rather than failing completely
     return anomalies.map(a => ({
       ...a,
+      explanation: getBasicExplanation(a),
       enriched: false,
-      enrichmentMethod: 'none'
+      enrichmentMethod: 'fallback',
     }));
   }
 };
