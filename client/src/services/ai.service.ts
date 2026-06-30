@@ -228,6 +228,41 @@ class AIService {
       throw error;
     }
   }
+
+  // ── Tax-Loss Harvesting Engine ───────────────────────────────────────────
+  async getTaxLossHarvesting(taxRate?: number) {
+    try {
+      const query = taxRate ? `?taxRate=${taxRate}` : '';
+      const response = await apiFetch<{ data: any }>(`/api/ai/tax-loss-harvesting${query}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching tax-loss harvesting opportunities:', error);
+      throw error;
+    }
+  }
+
+  // ── AI Weekly Report (data only — PDF is rendered client-side) ─────────
+  async getWeeklyReport() {
+    try {
+      const response = await apiFetch<{ data: any }>('/api/ai/weekly-report');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching weekly report:', error);
+      throw error;
+    }
+  }
+
+  // ── Gemini quota/health status — drives an "AI: live / local reasoning"
+  //    badge instead of failing silently when the daily quota is hit.
+  async getAIQuotaStatus() {
+    try {
+      const response = await apiFetch<{ data: any }>('/api/ai/quota-status');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching AI quota status:', error);
+      throw error;
+    }
+  }
 }
 
 export default new AIService();
