@@ -167,7 +167,18 @@ const aiSchemas = {
         })
       ).max(20).default([]),
     }),
-  })
+  }),
+
+  getTaxLossHarvesting: z.object({
+    query: z.object({
+      taxRate: z.string()
+        .optional()
+        .transform((str) => (str ? parseFloat(str) : undefined))
+        .pipe(z.number().min(0).max(0.6).optional())
+    }).optional()
+  }),
+
+  getWeeklyReport: z.object({}).optional(),
 };
 
 module.exports = { aiSchemas };
