@@ -139,6 +139,51 @@ export interface PriceHistory {
   value: number;
 }
 
+export class PortfolioService {
+  async checkRebalanceTrigger(
+    portfolioId: string,
+    options: { driftThreshold?: number; scoreThreshold?: number } = {}
+  ): Promise<{
+    shouldRebalance: boolean;
+    score: number;
+    urgency: 'none' | 'low' | 'medium' | 'high';
+    reasons: string[];
+    driftDetails: Array<{
+      symbol: string;
+      actualWeight: number;
+      targetWeight: number;
+      drift: number;
+      flagged: boolean;
+    }>;
+    volatilityRegime: string;
+    summary: {
+      maxDriftPct: number;
+      avgDriftPct: number;
+      flaggedAssets: number;
+      totalAssets: number;
+      daysSinceRebalance: number | null;
+    };
+    lastChecked: string;
+  }> {
+    try {
+      const params = new URLSearchParams();
+      if (options.driftThreshold !== undefined) params.append('driftThreshold', String(options.driftThreshold));
+      if (options.scoreThreshold !== undefined) params.append('scoreThreshold', String(options.scoreThreshold));
+      const query = params.toString() ? `?${params.toString()}` : '';
+
+      const response = await apiFetch<{ data: any }>(
+        `/api/portfolio/${portfolioId}/rebalance-check${query}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error checking rebalance trigger:', error);
+      throw error;
+    }
+  }
+}
+
+export const portfolioService = new PortfolioService();
+
 export async function getPerformanceMetrics(): Promise<{ status: string; data: PerformanceMetrics }> {
   const response = await apiFetch('/api/portfolio/performance');
   return {
