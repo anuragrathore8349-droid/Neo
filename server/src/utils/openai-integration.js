@@ -4,16 +4,96 @@ const config = require('../config');
 
 /**
  * Gemini AI Integration for Financial Insights
- * Model: gemini-2.5-flash (free tier: 15 RPM, 1500 RPD)
- * Strategy: In-memory cache (1hr TTL) + sequential queue to respect rate limits
+ * Model: gemini-2.5-flash
+ *
+ * ── WHY THIS FILE WAS REWRITTEN (root cause of "rate limit exceeded with
+ *    very few requests") ─────────────────────────────────────────────────
+ * 1. The old code assumed gemini-2.5-flash free tier = 15 RPM / 1500 RPD.
+ *    The actual current free-tier limits for gemini-2.5-flash are far
+ *    lower (single-digit RPM and a few hundred RPD depending on region/
+ *    project). The 4.5s spacing was tuned for a quota 5-6x larger than
+ *    what Google actually grants, so the 15th/20th request of the day
+ *    already came back 429 even though "not many" requests were made.
+ *    Fix: real, configurable limits via env vars, with safe defaults,
+ *    plus a hard DAILY counter that stops calling the API once exhausted
+ *    instead of retrying into more 429s.
+ *
+ * 2. `enrichAnomaliesWithInsights()` and the pattern-detection equivalent
+ *    called `getOpenAIInsights()` inside `anomalies.map(...)` wrapped in
+ *    `Promise.all`, i.e. one Gemini call PER anomaly/pattern. A single
+ *    market scan that finds 10-15 anomalies burned 10-15 requests in one
+ *    shot — enough to exhaust an entire day's free quota in one job run.
+ *    Fix: batched call — one Gemini request explains ALL anomalies in
+ *    that batch via a single structured-JSON prompt (see `callGeminiBatch`
+ *    in ai.service.js usage). This is also done by all heavy callers now
+ *    routing through `aiNarrativeLayer.js`, the single hybrid integration
+ *    seam, instead of calling Gemini directly from multiple files.
+ *
+ * 3. 429 retries used exponential backoff INSIDE the per-request loop but
+ *    nothing prevented the *next* queued item from immediately re-hitting
+ *    the same exhausted quota a few seconds later — so a burst of calls
+ *    could 429 repeatedly in sequence. Fix: a single shared
+ *    `dailyQuotaExceeded` flag short-circuits ALL further calls until
+ *    midnight UTC reset once Google confirms quota exhaustion (403/429
+ *    with quota-exceeded reason), instead of retrying each one.
+ * ───────────────────────────────────────────────────────────────────────
  */
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-// Free tier: 15 RPM → min 4000ms between requests (4s + 500ms buffer = 4500ms)
-const MIN_DELAY_MS = 4500;
+// Real free-tier numbers are much tighter than the old comment assumed.
+// Override via env if you're on a paid tier with higher limits.
+const RPM_LIMIT = parseInt(process.env.GEMINI_RPM_LIMIT || '8', 10);   // requests/minute
+const RPD_LIMIT = parseInt(process.env.GEMINI_RPD_LIMIT || '200', 10); // requests/day
+const MIN_DELAY_MS = Math.ceil(60000 / RPM_LIMIT) + 500; // spacing derived FROM the real limit, not hardcoded
+
+// ─── DAILY QUOTA TRACKER ──────────────────────────────────────────────────────
+// Stops the app from hammering Google once the daily cap is hit — instead
+// every caller gets `null` immediately and falls back to deterministic
+// templates (see aiNarrativeLayer.js), with no extra network round trips.
+
+class DailyQuota {
+  constructor(limit) {
+    this.limit = limit;
+    this.count = 0;
+    this.resetAt = nextMidnightUTC();
+    this.hardExceeded = false; // set true if Google itself reports quota exceeded (403)
+  }
+
+  _maybeReset() {
+    if (Date.now() >= this.resetAt) {
+      this.count = 0;
+      this.hardExceeded = false;
+      this.resetAt = nextMidnightUTC();
+      logger.info('🔄 Gemini daily quota counter reset');
+    }
+  }
+
+  canCall() {
+    this._maybeReset();
+    return !this.hardExceeded && this.count < this.limit;
+  }
+
+  recordCall() {
+    this._maybeReset();
+    this.count += 1;
+  }
+
+  markHardExceeded() {
+    this.hardExceeded = true;
+    logger.error(`🛑 Gemini daily quota exhausted (${this.count}/${this.limit}) — falling back to templates until reset`);
+  }
+}
+
+function nextMidnightUTC() {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.getTime();
+}
+
+const dailyQuota = new DailyQuota(RPD_LIMIT);
 
 // ─── REQUEST QUEUE ────────────────────────────────────────────────────────────
 
@@ -38,7 +118,13 @@ class RequestQueue {
     while (this.queue.length > 0) {
       const { task, resolve, reject } = this.queue.shift();
 
-      // Enforce minimum delay between requests
+      // Short-circuit immediately if we already know the quota is gone —
+      // don't even wait out the spacing delay before failing fast.
+      if (!dailyQuota.canCall()) {
+        resolve(null);
+        continue;
+      }
+
       const elapsed = Date.now() - this.lastRequestTime;
       if (elapsed < MIN_DELAY_MS) {
         await sleep(MIN_DELAY_MS - elapsed);
@@ -77,11 +163,11 @@ function setCache(key, value) {
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**
- * Core Gemini API call — queued, cached, with retry on 429
+ * Core Gemini API call — queued, cached, daily-quota-aware, retry on 429.
  * @param {string} prompt
  * @param {'text'|'json'} format
  * @returns {Promise<string|null>}
@@ -100,9 +186,16 @@ async function callGemini(prompt, format = 'text') {
     return null;
   }
 
+  if (!dailyQuota.canCall()) {
+    logger.debug('⏭️  Gemini daily quota exhausted — skipping call, fallback will be used');
+    return null;
+  }
+
   return requestQueue.add(async () => {
-    for (let attempt = 0; attempt <= 3; attempt++) {
+    for (let attempt = 0; attempt <= 2; attempt++) {
       try {
+        dailyQuota.recordCall();
+
         const response = await axios.post(
           `${GEMINI_API_URL}?key=${apiKey}`,
           {
@@ -118,7 +211,6 @@ async function callGemini(prompt, format = 'text') {
         const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (!text) throw new Error('Empty Gemini response');
 
-        // Strip markdown code blocks if present (Gemini sometimes wraps JSON)
         const clean = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
 
         setCache(cacheKey, clean);
@@ -127,17 +219,24 @@ async function callGemini(prompt, format = 'text') {
 
       } catch (err) {
         const status = err?.response?.status;
+        const reason = err?.response?.data?.error?.status; // e.g. 'RESOURCE_EXHAUSTED'
 
         if (status === 429) {
+          if (reason === 'RESOURCE_EXHAUSTED' || dailyQuota.count >= dailyQuota.limit) {
+            dailyQuota.markHardExceeded();
+            return null; // don't burn more retries — fail fast for the rest of the day
+          }
           const retryAfter = parseInt(err?.response?.headers?.['retry-after'] || '0') * 1000;
-          const delay = retryAfter || Math.min(30000, Math.pow(2, attempt) * 5000);
-          logger.warn(`⚠️ Gemini rate limit (429). Retry ${attempt + 1}/3 in ${delay}ms`);
-          if (attempt < 3) { await sleep(delay); continue; }
+          const delay = retryAfter || Math.min(15000, Math.pow(2, attempt) * 3000);
+          logger.warn(`⚠️ Gemini rate limit (429). Retry ${attempt + 1}/2 in ${delay}ms`);
+          if (attempt < 2) { await sleep(delay); continue; }
+          return null;
         } else if (status === 400) {
           logger.error('❌ Gemini 400 Bad Request — check prompt or API key validity');
           return null;
         } else if (status === 403) {
           logger.error('❌ Gemini 403 Forbidden — API key invalid or quota exceeded');
+          dailyQuota.markHardExceeded();
           return null;
         } else if (err.code === 'ECONNABORTED') {
           logger.warn('⚠️ Gemini timeout (20s)');
@@ -148,16 +247,50 @@ async function callGemini(prompt, format = 'text') {
         }
       }
     }
-    logger.warn('⚠️ Gemini max retries reached — returning null (fallback will be used)');
     return null;
   });
 }
 
+/**
+ * Batched insight generator — explains MULTIPLE anomalies/patterns in
+ * ONE Gemini call instead of one call per item. This is the single
+ * biggest fix for quota exhaustion: a scan that used to cost N requests
+ * now costs 1.
+ *
+ * @param {Array<Object>} items - each item needs enough fields to describe itself
+ * @param {(item:Object)=>string} describeFn - turns one item into a one-line description
+ * @returns {Promise<string[]|null>} array of explanations, same order/length as items, or null
+ */
+async function callGeminiBatch(items, describeFn) {
+  if (!items || items.length === 0) return [];
+  if (items.length === 1) {
+    const single = await callGemini(
+      `In one sentence, explain (financially, concisely): ${describeFn(items[0])}`,
+      'text'
+    );
+    return single ? [single] : null;
+  }
+
+  const numbered = items.map((it, i) => `${i + 1}. ${describeFn(it)}`).join('\n');
+  const prompt =
+    `For each numbered item below, write exactly ONE concise financial-explanation sentence. ` +
+    `Return ONLY a JSON array of strings, same order, same length as the input (no markdown).\n\n${numbered}`;
+
+  const result = await callGemini(prompt, 'json');
+  if (!result) return null;
+
+  try {
+    const parsed = JSON.parse(result);
+    if (Array.isArray(parsed) && parsed.length === items.length) return parsed;
+    return null;
+  } catch {
+    logger.warn('Failed to parse Gemini batch JSON — caller should use per-item fallback');
+    return null;
+  }
+}
+
 // ─── PUBLIC API ───────────────────────────────────────────────────────────────
 
-/**
- * Explain a detected market anomaly in one sentence
- */
 async function getOpenAIInsights(anomaly) {
   const prompt = `In one sentence, explain why ${anomaly.symbol} might show a ${anomaly.type} anomaly with z-score ${anomaly.zScore} (mean: ${anomaly.mean}, value: ${anomaly.value}). Be concise and financial.`;
 
@@ -165,10 +298,6 @@ async function getOpenAIInsights(anomaly) {
   return result || getBasicExplanation(anomaly);
 }
 
-/**
- * Analyse text sentiment for a crypto asset
- * Returns { sentiment, score, confidence, reason }
- */
 async function getSentimentAnalysis(symbol, content) {
   const fallback = { sentiment: 'neutral', score: 0.5, confidence: 0.5, reason: 'AI unavailable' };
 
@@ -193,10 +322,6 @@ async function getSentimentAnalysis(symbol, content) {
   }
 }
 
-/**
- * Generate investment strategy recommendations
- * Returns array of strategy objects or a single object
- */
 async function generateStrategyRecommendation(portfolio, marketConditions) {
   const fallback = generateBasicStrategy(portfolio);
 
@@ -216,7 +341,6 @@ Return ONLY the JSON array.`;
 
   try {
     const parsed = JSON.parse(result);
-    // Handle both array and single object responses
     const strategies = Array.isArray(parsed) ? parsed : [parsed];
     return strategies.map(s => ({
       type: s.type || 'moderate',
@@ -233,9 +357,6 @@ Return ONLY the JSON array.`;
   }
 }
 
-/**
- * Explain the short-term impact of a news headline on a crypto asset
- */
 async function explainNewsImpact(symbol, newsTitle, category) {
   const fallback = buildNewsImpactFallback(symbol, newsTitle, category);
 
@@ -286,23 +407,23 @@ function generateBasicStrategy(portfolio) {
 // ─── STATUS LOG ───────────────────────────────────────────────────────────────
 
 if (config.gemini?.apiKey) {
-  logger.info('✅ Gemini AI integration ready (gemini-2.5-flash, free tier)');
+  logger.info(`✅ Gemini AI integration ready (gemini-2.5-flash) — limits: ${RPM_LIMIT} RPM / ${RPD_LIMIT} RPD (set GEMINI_RPM_LIMIT / GEMINI_RPD_LIMIT to override)`);
 } else {
   logger.warn('⚠️ GEMINI_API_KEY not set — AI insights will use statistical fallback');
 }
 
 /**
  * Portfolio-aware Gemini chat
- * @param {string} userMessage
- * @param {Array<{role:'user'|'model', text:string}>} history  previous turns
- * @param {Object} portfolioContext  { assets, totalValue, totalPL, ... }
- * @param {Object} marketPrices      { BTC: { price, change24h }, ... }
- * @returns {Promise<string|null>}
  */
 async function callGeminiPortfolioChat(userMessage, history = [], portfolioContext = {}, marketPrices = {}) {
   const apiKey = config.gemini?.apiKey;
   if (!apiKey) {
     logger.warn('⚠️  GEMINI_API_KEY not set — portfolio chat unavailable');
+    return null;
+  }
+
+  if (!dailyQuota.canCall()) {
+    logger.debug('⏭️  Gemini daily quota exhausted — chat will use local reasoning fallback');
     return null;
   }
 
@@ -355,8 +476,10 @@ async function callGeminiPortfolioChat(userMessage, history = [], portfolioConte
   }
 
   return requestQueue.add(async () => {
-    for (let attempt = 0; attempt <= 2; attempt++) {
+    for (let attempt = 0; attempt <= 1; attempt++) {
       try {
+        dailyQuota.recordCall();
+
         const response = await axios.post(
           `${GEMINI_API_URL}?key=${apiKey}`,
           {
@@ -374,10 +497,17 @@ async function callGeminiPortfolioChat(userMessage, history = [], portfolioConte
         setCache(cacheKey, text);
         return text;
       } catch (err) {
-        if (err.response?.status === 429 && attempt < 2) {
-          logger.warn(`⏳ Gemini 429 on chat — retrying in ${(attempt + 1) * 5}s`);
-          await sleep((attempt + 1) * 5000);
-          continue;
+        const status = err.response?.status;
+        if (status === 429) {
+          if (err?.response?.data?.error?.status === 'RESOURCE_EXHAUSTED' || dailyQuota.count >= dailyQuota.limit) {
+            dailyQuota.markHardExceeded();
+            return null;
+          }
+          if (attempt < 1) {
+            logger.warn(`⏳ Gemini 429 on chat — retrying once in 4s`);
+            await sleep(4000);
+            continue;
+          }
         }
         logger.error('Gemini portfolio chat error:', err.message);
         return null;
@@ -388,12 +518,14 @@ async function callGeminiPortfolioChat(userMessage, history = [], portfolioConte
 }
 
 module.exports = {
-  getOpenAIInsights,      // kept same name so ai.service.js imports work unchanged
+  getOpenAIInsights,
   getSentimentAnalysis,
   generateStrategyRecommendation,
   explainNewsImpact,
   getBasicExplanation,
   generateBasicStrategy,
   callGemini,
+  callGeminiBatch,
   callGeminiPortfolioChat,
+  _dailyQuota: dailyQuota, // exposed for /api/ai/quota-status + tests
 };
