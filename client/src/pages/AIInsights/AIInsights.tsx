@@ -6,6 +6,7 @@ import PredictionCard from '../../components/ai/PredictionCard/PredictionCard';
 import StrategyCard from '../../components/ai/StrategyCard/StrategyCard';
 import MarketInsightCard from '../../components/ai/MarketInsightCard/MarketInsightCard';
 import PortfolioChat from '../../components/ai/PortfolioChat/PortfolioChat';
+import TaxLossHarvestingPanel from '../../components/ai/TaxLossHarvesting/TaxLossHarvestingPanel';
 import { usePlan } from '../../context/PlanContext';
 import UpgradeWall from '../../components/common/UpgradeWall/UpgradeWall';
 
@@ -765,6 +766,10 @@ const AIInsights: React.FC = () => {
 
         {/* NEW: Market Overview Panel */}
         <MarketOverviewPanel data={marketOverview} loading={overviewLoading} />
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <TaxLossHarvestingPanel className="xl:col-span-2" />
+        </div>
 
         {/* Price Predictions + Risk Assessment */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
