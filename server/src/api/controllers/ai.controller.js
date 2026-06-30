@@ -3,6 +3,14 @@ const { logger } = require('../middlewares/logger.middleware');
 const { success } = require('../../utils/responseNormaliser');
 
 class AIController {
+  constructor() {
+    Object.getOwnPropertyNames(AIController.prototype)
+      .filter((name) => name !== 'constructor' && typeof AIController.prototype[name] === 'function')
+      .forEach((name) => {
+        this[name] = this[name].bind(this);
+      });
+  }
+
   async getPricePredictions(req, res, next) {
     try {
       const { symbol } = req.validatedData.params;
@@ -95,6 +103,10 @@ class AIController {
     }
   }
 
+  async getNewsAnalysis(req, res, next) {
+    return this.analyzeNews(req, res, next);
+  }
+
   async detectAnomalies(req, res, next) {
     try {
       const body = req.validatedData.body;
@@ -115,6 +127,21 @@ class AIController {
       const insights = await aiService.getPersonalizedInsights(userId);
 
       res.json(success(insights, { dataSource: 'kraken' }));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async portfolioChat(req, res, next) {
+    try {
+      const userId = req.user?.userId || req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Authentication required' });
+      }
+
+      const { message, history } = req.validatedData.body;
+      const result = await aiService.portfolioChat(userId, message, history);
+      res.json({ status: 'success', data: result });
     } catch (error) {
       next(error);
     }
@@ -152,6 +179,50 @@ class AIController {
     try {
       const data = await aiService.getMarketOverview();
       res.json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ── Tax-Loss Harvesting Engine ──────────────────────────────────────────
+  // Deterministic rule-based engine (neoReasoningEngine) + optional Gemini
+  // narrative polish. Always returns real numbers even if Gemini is down.
+  async getTaxLossHarvesting(req, res, next) {
+    try {
+      const taxLossHarvestingService = require('../../services/taxLossHarvesting.service');
+      const taxRate = req.validatedData?.query?.taxRate;
+      const result = await taxLossHarvestingService.getOpportunities(req.user.userId, { taxRate });
+      res.json(success(result, { dataSource: 'live-portfolio', methodology: 'deterministic-rule-based' }));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ── AI Weekly Report (data) — client renders the PDF with jsPDF ────────
+  async getWeeklyReport(req, res, next) {
+    try {
+      const weeklyReportService = require('../../services/weeklyReport.service');
+      const report = await weeklyReportService.buildReport(req.user.userId);
+      res.json(success(report, { dataSource: 'live-portfolio' }));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ── Gemini quota/health status — lets the client show "AI: live" vs
+  //    "AI: using local reasoning (daily limit reached)" instead of
+  //    silently failing or showing a generic error.
+  async getAIQuotaStatus(req, res, next) {
+    try {
+      const { _dailyQuota } = require('../../utils/openai-integration');
+      res.json(success({
+        provider: 'gemini-2.5-flash',
+        callsToday: _dailyQuota.count,
+        dailyLimit: _dailyQuota.limit,
+        quotaExceeded: _dailyQuota.hardExceeded,
+        resetsAt: new Date(_dailyQuota.resetAt).toISOString(),
+        fallbackMode: _dailyQuota.hardExceeded ? 'deterministic-templates' : 'none',
+      }));
     } catch (error) {
       next(error);
     }
