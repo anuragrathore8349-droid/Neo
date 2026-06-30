@@ -1,5 +1,19 @@
 const { logger } = require('../api/middlewares/logger.middleware');
-const { getOpenAIInsights } = require('./openai-integration');
+const { callGeminiBatch } = require('./openai-integration');
+
+// Same cooldown fix as anomalies.js — pattern detection ran on every job
+// cycle and called Gemini per pattern with no throttle, contributing to
+// daily quota exhaustion. One AI explanation per pattern-type per symbol
+// per 15 minutes is plenty; the deterministic confidence-based fallback
+// covers everything in between.
+const COOLDOWN_MS = 15 * 60 * 1000;
+const lastEnrichedAt = new Map();
+function shouldEnrichWithAI(key) {
+  const last = lastEnrichedAt.get(key) || 0;
+  if (Date.now() - last < COOLDOWN_MS) return false;
+  lastEnrichedAt.set(key, Date.now());
+  return true;
+}
 
 /**
  * Technical Pattern Detection
@@ -206,28 +220,34 @@ const findLocalExtrema = (prices, type = 'max') => {
 /**
  * Enrich patterns with OpenAI explanations
  */
+/**
+ * FIX: was one Gemini call per detected pattern. Now batched into one call.
+ */
 const enrichPatternsWithInsights = async (patterns) => {
-  return Promise.all(
-    patterns.map(async (pattern) => {
-      try {
-        const insight = await getOpenAIInsights({
-          type: 'pattern',
-          patternType: pattern.type,
-          signal: pattern.signal,
-          confidence: pattern.confidence
-        });
+  if (!patterns || patterns.length === 0) return [];
 
-        return { ...pattern, explanation: insight };
-      } catch (error) {
-        logger.warn('Failed to enrich pattern:', error.message);
-        return { ...pattern, explanation: `${pattern.type} detected (confidence: ${(pattern.confidence * 100).toFixed(0)}%)` };
-      }
-    })
-  );
+  try {
+    const describe = (p) =>
+      `${p.type} pattern, signal=${p.signal}, confidence=${(p.confidence * 100).toFixed(0)}%`;
+
+    const explanations = await callGeminiBatch(patterns, describe);
+
+    return patterns.map((pattern, i) => ({
+      ...pattern,
+      explanation: explanations?.[i] || `${pattern.type} detected (confidence: ${(pattern.confidence * 100).toFixed(0)}%)`,
+    }));
+  } catch (error) {
+    logger.warn('Failed to enrich patterns:', error.message);
+    return patterns.map((pattern) => ({
+      ...pattern,
+      explanation: `${pattern.type} detected (confidence: ${(pattern.confidence * 100).toFixed(0)}%)`,
+    }));
+  }
 };
 
 module.exports = {
   detectPatterns,
   detectSpecificPattern,
-  findLocalExtrema
+  findLocalExtrema,
+  enrichPatternsWithInsights
 };
