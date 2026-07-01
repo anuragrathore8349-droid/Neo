@@ -1787,7 +1787,6 @@ class AIService {
     try {
       logger.debug(`[PortfolioChat] userId=${userId} message="${message.slice(0, 60)}"`);
 
-      const { callGeminiPortfolioChat } = require('../utils/openai-integration');
       const portfolioService = require('./portfolio.service');
 
       // ── 1. Fetch real portfolio data ──────────────────────────────────────
@@ -1821,32 +1820,19 @@ class AIService {
         assets,
       };
 
-      // ── 4. Call Gemini ────────────────────────────────────────────────────
-      const geminiReply = await callGeminiPortfolioChat(message, history, portfolioContext, marketPrices);
+      // ── 4. Deterministic reasoning engine is PRIMARY — instant, free, never down ──
+      const { generateChatReply } = require('./neoChatEngine');
+      const engineResult = generateChatReply(message, history, portfolioContext, marketPrices);
 
-      if (geminiReply) {
-        return {
-          reply: geminiReply,
-          portfolioContext: {
-            totalValue: portfolioContext.totalValue,
-            assetCount: assets.length,
-            symbols,
-          },
-          source: 'gemini_2.5_flash',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      // ── 5. Fallback: rule-based response if Gemini unavailable ────────────
-      const fallbackReply = this._portfolioChatFallback(message, portfolioContext, marketPrices);
       return {
-        reply: fallbackReply,
+        reply: engineResult.reply,
         portfolioContext: {
           totalValue: portfolioContext.totalValue,
           assetCount: assets.length,
           symbols,
         },
-        source: 'statistical_fallback',
+        source: 'neo_reasoning_engine',
+        intent: engineResult.intent,
         timestamp: new Date().toISOString(),
       };
 
@@ -1857,39 +1843,91 @@ class AIService {
   }
 
   /**
-   * Rule-based fallback reply when Gemini is unavailable
+   * Rule-based fallback reply when Gemini is unavailable.
+   * FIXED: now routed through neoReasoningEngine (the same deterministic
+   * source of truth used by Tax-Loss Harvesting / Weekly Report) instead
+   * of crude keyword stubs, and the "why AI is unavailable" note is now
+   * accurate (quota exhausted vs. no key vs. transient error) instead of
+   * always blaming a missing GEMINI_API_KEY.
    * @private
    */
   _portfolioChatFallback(message, portfolioContext, marketPrices) {
     const msg = message.toLowerCase();
     const { totalValue = 0, totalPL = 0, totalPLPercentage = 0, assets = [] } = portfolioContext;
 
+    const reasoningEngine = require('./neoReasoningEngine');
+    const aiNote = this._aiUnavailableNote();
+
+    // ── Tax-loss harvesting intent ──────────────────────────────────────
+    if (msg.includes('tax') || msg.includes('harvest') || msg.includes('loss') && msg.includes('sell')) {
+      const normalised = assets.map(a => ({
+        symbol: a.symbol, name: a.name, amount: a.amount ?? a.quantity,
+        costBasis: a.costBasis, currentPrice: a.currentPrice, profit: a.profitLoss ?? a.profit,
+      }));
+      const result = reasoningEngine.analyzeTaxLossOpportunities(normalised);
+      if (result.opportunityCount === 0) {
+        return `No tax-loss harvesting opportunities right now — none of your positions are showing an unrealised loss. ${aiNote}`;
+      }
+      const top = result.opportunities[0];
+      return `You have ${result.opportunityCount} tax-loss harvesting opportunit${result.opportunityCount === 1 ? 'y' : 'ies'}, ` +
+        `worth an estimated $${result.totalPotentialTaxSavings.toLocaleString()} in potential tax savings. ` +
+        `Your biggest opportunity is ${top.symbol}, down $${top.lossAmount.toLocaleString()} (${top.lossPercentage}%)` +
+        `${top.suggestedSwap ? `; consider swapping into ${top.suggestedSwap.suggestedSymbol} to keep similar exposure` : ''}. ` +
+        `This is not tax advice. ${aiNote}`;
+    }
+
+    // ── Risk / diversification intent ───────────────────────────────────
+    if (msg.includes('risk') || msg.includes('safe') || msg.includes('diversif') || msg.includes('rebalance')) {
+      const health = reasoningEngine.scorePortfolioHealth(
+        assets.map(a => ({ symbol: a.symbol, value: a.value, amount: a.amount ?? a.quantity, currentPrice: a.currentPrice }))
+      );
+      return `Your diversification score is ${health.diversificationScore}/100. ` +
+        `${health.concentrationWarning || 'No single asset group dominates your portfolio.'} ${aiNote}`;
+    }
+
+    // ── Value / worth intent ────────────────────────────────────────────
     if (msg.includes('worth') || msg.includes('value') || msg.includes('total')) {
       return `Your portfolio is currently valued at $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ` +
         `across ${assets.length} asset(s). ` +
-        `Overall P&L: ${totalPL >= 0 ? '+' : ''}$${totalPL.toFixed(2)} (${totalPLPercentage.toFixed(2)}%). ` +
-        `\n\n*Note: Set GEMINI_API_KEY in server/.env for personalised AI analysis.*`;
+        `Overall P&L: ${totalPL >= 0 ? '+' : ''}$${totalPL.toFixed(2)} (${totalPLPercentage.toFixed(2)}%). ${aiNote}`;
     }
 
+    // ── Performance intent ───────────────────────────────────────────────
     if (msg.includes('best') || msg.includes('top') || msg.includes('perform')) {
       const sorted = [...assets].sort((a, b) => (b.profitLossPercentage || 0) - (a.profitLossPercentage || 0));
       const top = sorted.slice(0, 3).map(a => `${a.symbol} (${(a.profitLossPercentage || 0).toFixed(2)}%)`).join(', ');
-      return `Your best performing assets are: ${top || 'none yet'}. ` +
-        `\n\n*Set GEMINI_API_KEY for full AI-powered analysis.*`;
-    }
-
-    if (msg.includes('risk') || msg.includes('safe') || msg.includes('diversif')) {
-      const cryptoCount = assets.filter(a => a.type === 'crypto').length;
-      const stockCount = assets.filter(a => a.type === 'stock').length;
-      return `Your portfolio contains ${cryptoCount} crypto and ${stockCount} stock position(s). ` +
-        `${cryptoCount > stockCount * 2 ? 'You appear crypto-heavy — consider adding equities for diversification.' : 'Your mix looks reasonably balanced.'} ` +
-        `\n\n*Set GEMINI_API_KEY for AI-powered risk analysis.*`;
+      const worst = sorted.slice(-1).map(a => `${a.symbol} (${(a.profitLossPercentage || 0).toFixed(2)}%)`)[0];
+      return `Your best performing assets are: ${top || 'none yet'}.` +
+        `${worst ? ` Your weakest is ${worst}.` : ''} ${aiNote}`;
     }
 
     return `I can see your portfolio is worth $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ` +
-      `with ${assets.length} holding(s). ` +
-      `To get full AI-powered answers about your specific situation, add GEMINI_API_KEY to server/.env. ` +
-      `\n\nIn the meantime, ask me about your portfolio value, best performers, or risk exposure.`;
+      `with ${assets.length} holding(s). Ask me about portfolio value, top/worst performers, risk & diversification, ` +
+      `or tax-loss harvesting opportunities. ${aiNote}`;
+  }
+
+  /**
+   * Builds an accurate "why is AI unavailable" note instead of always
+   * blaming a missing GEMINI_API_KEY (the real cause is usually the daily
+   * quota being exhausted by anomaly/pattern scans, not a missing key).
+   * @private
+   */
+  _aiUnavailableNote() {
+    try {
+      const { _dailyQuota } = require('../utils/openai-integration');
+      const config = require('../config');
+
+      if (!config.gemini?.apiKey) {
+        return '\n\n*Set GEMINI_API_KEY in server/.env for AI-narrated answers — the numbers above are accurate either way.*';
+      }
+      if (_dailyQuota.hardExceeded) {
+        const resetTime = new Date(_dailyQuota.resetAt).toUTCString();
+        return `\n\n*AI narration is using today's full quota and resets at ${resetTime}. The numbers above come from NeoFin's own reasoning engine, not Gemini, so they're accurate regardless.*`;
+      }
+      return '\n\n*AI narration is temporarily unavailable — showing NeoFin\'s own reasoning engine instead. The numbers above are accurate either way.*';
+    } catch {
+      return '';
+    }
   }
 }
 
