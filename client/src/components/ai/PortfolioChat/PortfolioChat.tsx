@@ -16,14 +16,13 @@ interface PortfolioChatProps {
 const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      text: "Hi! I'm Neo, your AI portfolio advisor. I have real-time access to your holdings and market data. Ask me anything about your portfolio — performance, risk, rebalancing ideas, or market context.",
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    },
-  ]);
+  const welcomeMessage: Message = {
+    role: 'assistant',
+    text: "Hi! I'm Neo, your AI portfolio advisor. I have real-time access to your holdings and market data. Ask me anything about your portfolio — performance, risk, rebalancing ideas, or market context.",
+    timestamp: new Date().toISOString(),
+    source: 'system',
+  };
+  const [messages, setMessages] = useState<Message[]>([welcomeMessage]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [portfolioContext, setPortfolioContext] = useState<any>(null);
@@ -83,6 +82,13 @@ const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
     }
   };
 
+  const resetChat = () => {
+    setMessages([{ ...welcomeMessage, timestamp: new Date().toISOString() }]);
+    setPortfolioContext(null);
+    setInput('');
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -138,6 +144,12 @@ const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
         </div>
         <div className="flex items-center gap-1">
           <button
+            onClick={resetChat}
+            className="px-2 py-1 text-xs text-[#C7D2FE] bg-[#2C3CE6]/10 hover:bg-[#2C3CE6]/15 rounded-lg transition-colors"
+          >
+            Reset
+          </button>
+          <button
             onClick={() => setIsMinimized(v => !v)}
             className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
           >
@@ -173,7 +185,7 @@ const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
                   {msg.text}
                   {msg.source && msg.source !== 'system' && msg.source !== 'error' && msg.role === 'assistant' && (
                     <span className={`block text-[10px] mt-1.5 opacity-50 ${msg.role === 'user' ? 'text-white' : 'text-gray-500'}`}>
-                      {msg.source === 'gemini_2.5_flash' ? '✦ Gemini 2.5 Flash' : '◎ Statistical Fallback'}
+                      {msg.source === 'gemini_2.5_flash' ? '✦ Gemini 2.5 Flash' : '⚡ Neo Reasoning Engine'}
                     </span>
                   )}
                 </div>
@@ -197,9 +209,10 @@ const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
             <div ref={bottomRef} />
           </div>
 
-          {/* Quick Prompts — shown only when no conversation yet */}
-          {messages.length === 1 && (
-            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+          {/* Suggested questions — keep available throughout the chat */}
+          <div className="px-4 pb-2">
+            <p className="text-[10px] uppercase tracking-[0.24em] text-gray-500 mb-2">Suggested questions</p>
+            <div className="flex flex-wrap gap-1.5">
               {quickPrompts.map(q => (
                 <button
                   key={q}
@@ -211,7 +224,7 @@ const PortfolioChat: React.FC<PortfolioChatProps> = ({ className = '' }) => {
                 </button>
               ))}
             </div>
-          )}
+          </div>
 
           {/* Input */}
           <div className="px-3 pb-3 pt-2 border-t border-[#3D5AF1]/10">
